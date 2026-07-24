@@ -47,6 +47,7 @@ PAGES = {
     ],
     "TRADING": [
         st.Page("pages/4_Option_Finder.py", title="Option Finder"),
+        st.Page("pages/9_Roll_Finder.py",   title="Roll Finder"),
         st.Page("pages/8_Order_Ticket.py",  title="Order Ticket"),
         st.Page("pages/5_Trade_Log.py",     title="Trade Log"),
     ],
