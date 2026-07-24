@@ -29,7 +29,7 @@ st.caption("FULL CHAIN FOR ANY TICKER | ALL STRIKES | ALL METRICS | ROLL CALCULA
 
 # ── Watchlist quick-select buttons ────────────────────────────────────────────
 wl = get_watchlist()
-wl_tickers = [w["ticker"] for w in wl]
+wl_tickers = sorted(w["ticker"] for w in wl)   # alphabetical, regardless of DB vs default order
 
 st.markdown("### QUICK SELECT")
 # Display as a grid of buttons — 10 per row
