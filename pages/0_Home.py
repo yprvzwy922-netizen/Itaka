@@ -17,23 +17,28 @@ st.markdown("---")
 st.markdown("### SELECT A TOOL")
 st.markdown(" ")
 
-col1, col2, col3, col4 = st.columns(4, gap="large")
+col1, col2, col3, col4, col5 = st.columns(5, gap="large")
 with col1:
+    st.markdown("**OPTION FINDER**")
+    st.markdown("Deep-dive put chain for any ticker — all strikes, yields, delta, cushion.")
+    if st.button("OPEN OPTION FINDER", type="primary", use_container_width=True):
+        st.switch_page("pages/4_Option_Finder.py")
+with col2:
     st.markdown("**ORDER TICKET**")
     st.markdown("Collect the strikes you picked into one broker-ready message.")
     if st.button("OPEN ORDER TICKET", type="primary", use_container_width=True):
         st.switch_page("pages/8_Order_Ticket.py")
-with col2:
+with col3:
     st.markdown("**TRADE LOG**")
     st.markdown("Record every trade — short puts, covered calls, spreads. Export to CSV.")
     if st.button("OPEN TRADE LOG", type="primary", use_container_width=True):
         st.switch_page("pages/5_Trade_Log.py")
-with col3:
+with col4:
     st.markdown("**PORTFOLIO & RISK**")
     st.markdown("Open positions, delta exposure by stock and sector, risk limit gauges.")
     if st.button("OPEN PORTFOLIO", type="primary", use_container_width=True):
         st.switch_page("pages/6_Portfolio.py")
-with col4:
+with col5:
     st.markdown("**PERFORMANCE**")
     st.markdown("Cash flows, NAV/unit (= time-weighted return), P&L and benchmark.")
     if st.button("OPEN PERFORMANCE", type="primary", use_container_width=True):

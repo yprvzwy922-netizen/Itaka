@@ -46,8 +46,9 @@ PAGES = {
         st.Page("pages/0_Home.py",         title="Home", default=True),
     ],
     "TRADING": [
-        st.Page("pages/8_Order_Ticket.py", title="Order Ticket"),
-        st.Page("pages/5_Trade_Log.py",    title="Trade Log"),
+        st.Page("pages/4_Option_Finder.py", title="Option Finder"),
+        st.Page("pages/8_Order_Ticket.py",  title="Order Ticket"),
+        st.Page("pages/5_Trade_Log.py",     title="Trade Log"),
     ],
     "FUND": [
         st.Page("pages/6_Portfolio.py",    title="Portfolio & Risk"),

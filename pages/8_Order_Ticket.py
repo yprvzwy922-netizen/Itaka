@@ -19,10 +19,12 @@ import ticket
 
 bbg_style.inject()
 
-c1, c2, _ = st.columns([1, 2, 7])
+c1, c2, c3, _ = st.columns([1, 2, 2, 5])
 with c1:
     if st.button("HOME"): st.switch_page("pages/0_Home.py")
 with c2:
+    if st.button("← OPTION FINDER"): st.switch_page("pages/4_Option_Finder.py")
+with c3:
     if st.button("→ TRADE LOG"): st.switch_page("pages/5_Trade_Log.py")
 
 st.title("ORDER TICKET")
