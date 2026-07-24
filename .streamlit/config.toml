@@ -1,0 +1,9 @@
+# Bloomberg-dark theme — themes native widgets (sliders, checkboxes, radios)
+# that CSS can't reliably reach across Streamlit versions.
+[theme]
+base = "dark"
+primaryColor = "#00c8ff"
+backgroundColor = "#0a0a0a"
+secondaryBackgroundColor = "#141414"
+textColor = "#cccccc"
+font = "monospace"

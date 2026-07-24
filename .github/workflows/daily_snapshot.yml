@@ -1,0 +1,22 @@
+name: Daily portfolio snapshot
+
+on:
+  schedule:
+    - cron: "40 21 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install yfinance pandas numpy requests
+      - name: Daily NAV + portfolio snapshot
+        run: python scripts/daily_snapshot.py
+        env:
+          SUPABASE_URL:    ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
