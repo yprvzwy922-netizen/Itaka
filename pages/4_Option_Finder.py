@@ -33,26 +33,45 @@ st.caption("Pick a ticker, tenor and delta band to see all matching put strikes.
            "Decision support — reconcile with your broker before trading.")
 
 # ── Controls ──────────────────────────────────────────────────────────────────
+ss = st.session_state
+ss.setdefault("of_ticker", "")
+ss.setdefault("of_load", False)
+
 wl = shared.get_watchlist()
 tickers = sorted({w["ticker"] for w in wl}) if wl else []
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4 = st.columns([3, 3, 3, 2])
 with col1:
     custom = st.text_input("Type any ticker").strip().upper()
-    pick   = st.selectbox("or watchlist ticker", tickers) if tickers else ""
-    ticker = custom or (pick or "")
 with col2:
-    tenor = st.selectbox("Tenor", ["1M (30–45 DTE)", "3M (80–100 DTE)", "6M (~180 DTE)", "Custom DTE"])
+    tenor = st.selectbox("Tenor", ["1M (30–45 DTE)", "3M (80–100 DTE)", "6M (~180 DTE)", "Custom DTE"],
+                         key="of_tenor")
     target_dte = {"1M (30–45 DTE)": 35, "3M (80–100 DTE)": 90, "6M (~180 DTE)": 180}.get(tenor)
     if tenor == "Custom DTE":
-        target_dte = int(st.number_input("DTE", min_value=7, max_value=365, value=35))
+        target_dte = int(st.number_input("DTE", min_value=7, max_value=365, value=35, key="of_dte"))
 with col3:
-    band = st.selectbox("Delta band", ["Income (0.15–0.30)", "Wheel (0.30–0.45)", "All"])
+    band = st.selectbox("Delta band", ["Income (0.15–0.30)", "Wheel (0.30–0.45)", "All"], key="of_band")
     delta_lo = {"Income (0.15–0.30)": 0.05, "Wheel (0.30–0.45)": 0.20}.get(band, 0.0)
     delta_hi = {"Income (0.15–0.30)": 0.45, "Wheel (0.30–0.45)": 0.65}.get(band, 1.0)
 with col4:
     st.markdown(" ")
     run = st.button("LOAD CHAIN", type="primary", use_container_width=True)
+    if run and custom:
+        ss["of_ticker"] = custom
+        ss["of_load"] = True
+
+# ── Quick select — one click per watchlist ticker ─────────────────────────────
+if tickers:
+    st.markdown("##### QUICK SELECT")
+    NCOLS = 10
+    for i in range(0, len(tickers), NCOLS):
+        cols = st.columns(NCOLS)
+        for c, tkr in zip(cols, tickers[i:i + NCOLS]):
+            if c.button(tkr, key=f"qs_{tkr}", use_container_width=True):
+                ss["of_ticker"] = tkr
+                ss["of_load"] = True
+else:
+    st.caption("No watchlist tickers yet — seed them on the Portfolio page (SYNC DEFAULT NAMES).")
 
 # ── Roll calculator (sidebar) ─────────────────────────────────────────────────
 with st.sidebar:
@@ -71,9 +90,11 @@ with st.sidebar:
     else:
         st.info("New DTE must exceed remaining DTE.")
 
-if not ticker or not run:
-    st.info("Select a ticker and click **LOAD CHAIN**.")
+if not ss.get("of_load") or not ss.get("of_ticker"):
+    st.info("Pick a ticker from **QUICK SELECT** above, or type one and click **LOAD CHAIN**.")
     st.stop()
+
+ticker = ss["of_ticker"]
 
 # ── Fetch (Massive-aware via shared.py) ───────────────────────────────────────
 with st.spinner(f"Fetching chain for {ticker}…"):
