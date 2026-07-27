@@ -458,6 +458,66 @@ st.caption("DELTA: short put = +d | short call = -d | long stock = +1 | covered 
 st.caption("PROFIT-TAKE PROCEDURE (MANUAL §5.1): GTC BUY-TO-CLOSE AT 50% ON ENTRY → CLOSE 1/2 AT 50%, 1/4 AT 75%, REST BY 90% OR MANAGE-BY DATE (1M @ 21 DTE, 3M @ 45 DTE). "
            "YIELD LEFT = ANNUALIZED YIELD OF PREMIUM STILL ON THE TABLE — IF < 15% AFTER THE 50% TIER, CLOSE AND REDEPLOY.")
 
+# ── Held stock — covered-call capacity (consolidated per ticker) ─────────────
+# Multiple Long Stock lots per name are possible (each assignment adds a row),
+# so aggregate by ticker. Shows what shares you hold, the call already written,
+# and how many MORE covered calls you could sell (free shares // 100).
+_stock = book[book["_IS_STOCK"]]
+if not _stock.empty:
+    st.markdown("### HELD STOCK — COVERED-CALL CAPACITY")
+    _cc = book[book["_IS_CC"]]
+    hs_rows = []
+    for tkr, grp in _stock.groupby("TICKER"):
+        sh_qty = pd.to_numeric(grp["CONTRACTS"], errors="coerce").fillna(0)
+        shares = int(sh_qty.sum())
+        basis  = pd.to_numeric(grp["PREM RECEIVED"], errors="coerce")   # entry px/share
+        avg_cost = float((basis * sh_qty).sum() / sh_qty.sum()) if sh_qty.sum() else float("nan")
+        spot_s = pd.to_numeric(grp["SPOT"], errors="coerce").dropna()
+        spot_v = float(spot_s.iloc[0]) if len(spot_s) else float("nan")
+        unreal = (spot_v - avg_cost) * shares if not (np.isnan(spot_v) or np.isnan(avg_cost)) else float("nan")
+
+        cgrp = _cc[_cc["TICKER"] == tkr]
+        call_cts = int(pd.to_numeric(cgrp["CONTRACTS"], errors="coerce").fillna(0).sum()) if not cgrp.empty else 0
+        if not cgrp.empty:
+            call_desc = " | ".join(
+                f"{int(r['CONTRACTS'])}×${r['SHORT STRIKE']:g} {str(r['EXPIRY'])[5:] or ''}".strip()
+                for _, r in cgrp.iterrows())
+        else:
+            call_desc = "—"
+        covered_sh = call_cts * 100
+        free_sh    = shares - covered_sh
+        calls_avail = free_sh // 100
+
+        hs_rows.append({
+            "TICKER": tkr, "SHARES": shares, "AVG COST": round(avg_cost, 2) if not np.isnan(avg_cost) else None,
+            "SPOT": round(spot_v, 2) if not np.isnan(spot_v) else None,
+            "UNREAL $": round(unreal, 0) if not np.isnan(unreal) else None,
+            "CALL": call_desc, "COVERED SH": covered_sh, "FREE SH": free_sh, "CALLS AVAIL": int(calls_avail),
+        })
+    hs = pd.DataFrame(hs_rows)
+
+    def _c_avail(v):
+        try:
+            f = float(v)
+            if f >= 1: return "color:#00e676;font-weight:700"   # free shares -> can write more calls
+            if f < 0:  return "color:#ff4444;font-weight:700"   # over-covered / naked
+            return "color:#888888"
+        except Exception:
+            return ""
+
+    st.dataframe(
+        hs.style
+          .map(color_pnl, subset=["UNREAL $"])
+          .map(_c_avail, subset=["CALLS AVAIL"])
+          .format({"AVG COST": "${:.2f}", "SPOT": "${:.2f}", "UNREAL $": "${:,.0f}",
+                   "SHARES": "{:,.0f}", "COVERED SH": "{:,.0f}", "FREE SH": "{:,.0f}"}, na_rep="—"),
+        use_container_width=True, hide_index=True,
+        column_config={"TICKER": st.column_config.Column(pinned=True)})
+    _avail = int(hs["CALLS AVAIL"].clip(lower=0).sum())
+    st.caption(f"CALLS AVAILABLE = free shares ÷ 100 — how many more covered calls you can write "
+               f"({_avail} total across the book). AVG COST is share-weighted across lots. "
+               f"Green = free shares to write; red = over-covered (naked).")
+
 # ── Tenor mix (manual: ~60-70% 1M / ~30-40% 3M) — options only ───────────────
 st.markdown("### TENOR MIX")
 tm = book[book["TENOR"].isin(["1M", "3M"])].groupby("TENOR")["CASH AT RISK"].sum()
