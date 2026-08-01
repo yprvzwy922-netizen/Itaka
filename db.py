@@ -48,13 +48,23 @@ def configured() -> bool:
     url, key = _creds()
     return bool(url and key)
 
+def _table_prefix() -> str:
+    """Optional per-deployment table namespace so several funds can share ONE
+    Supabase project (set TABLE_PREFIX in that app's secrets, e.g. "messi_").
+    Empty by default -> plain names (Itaka). Every table call flows through
+    _rest, so prefixing here namespaces the whole data layer at once."""
+    try:
+        return str(st.secrets.get("TABLE_PREFIX", "") or "")
+    except Exception:
+        return ""
+
 def _rest(method, table, params=None, json=None, prefer=None):
     url, key = _creds()
     headers = {"apikey": key, "Authorization": f"Bearer {key}",
                "Content-Type": "application/json"}
     if prefer:
         headers["Prefer"] = prefer
-    r = requests.request(method, f"{url}/rest/v1/{table}",
+    r = requests.request(method, f"{url}/rest/v1/{_table_prefix()}{table}",
                          headers=headers, params=params, json=json, timeout=12)
     if not r.ok:
         # Surface Supabase's actual message (RLS, missing column, bad key, etc.)

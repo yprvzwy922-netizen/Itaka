@@ -83,11 +83,15 @@ def mark_mid(tkr, strike, expiry, opt_type):
 
 HDRS = {"apikey": KEY, "Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}
 
+# Optional table namespace so several funds can share one Supabase project.
+# Set TABLE_PREFIX in this job's env (e.g. "messi_"); empty = plain names (Itaka).
+TABLE_PREFIX = os.environ.get("TABLE_PREFIX", "")
+
 def rest(method, table, params=None, json=None, prefer=None):
     h = dict(HDRS)
     if prefer:
         h["Prefer"] = prefer
-    r = requests.request(method, f"{URL}/rest/v1/{table}",
+    r = requests.request(method, f"{URL}/rest/v1/{TABLE_PREFIX}{table}",
                          headers=h, params=params, json=json, timeout=20)
     r.raise_for_status()
     return r.json() if r.text else None
