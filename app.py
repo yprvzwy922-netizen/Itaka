@@ -9,7 +9,17 @@ sys.path.insert(0, os.path.dirname(__file__))
 import streamlit as st
 import bbg_style
 
-st.set_page_config(page_title="Itaka Fund", page_icon=None, layout="wide",
+# Fund identity is per-deployment: set FUND_NAME in the app's Streamlit secrets.
+# One codebase serves multiple funds — each Streamlit app points at its own
+# Supabase and its own FUND_NAME. Defaults to ITAKA FUND when unset.
+def _fund_name():
+    try:
+        return str(st.secrets.get("FUND_NAME", "") or "ITAKA FUND")
+    except Exception:
+        return "ITAKA FUND"
+FUND_NAME = _fund_name()
+
+st.set_page_config(page_title=FUND_NAME, page_icon=None, layout="wide",
                    initial_sidebar_state="expanded")
 bbg_style.inject(guard=False)   # entrypoint renders the login itself
 
@@ -23,13 +33,13 @@ except Exception:
     PASSWORD = ""
 
 if not PASSWORD:
-    st.title("ITAKA FUND")
+    st.title(FUND_NAME)
     st.error("LOCKED — no password configured. Add SCREENER_PASSWORD to the app's "
              "Secrets (Manage app → Settings → Secrets), save, and reload.")
     st.stop()
 
 if not st.session_state.get("authenticated"):
-    st.title("ITAKA FUND")
+    st.title(FUND_NAME)
     st.markdown("---")
     pwd = st.text_input("PASSWORD", type="password")
     if st.button("LOGIN", type="primary"):

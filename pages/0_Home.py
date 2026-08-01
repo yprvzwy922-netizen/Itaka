@@ -9,7 +9,13 @@ import bbg_style
 
 bbg_style.inject()
 
-st.title("ITAKA FUND")
+def _fund_name():
+    try:
+        return str(st.secrets.get("FUND_NAME", "") or "ITAKA FUND")
+    except Exception:
+        return "ITAKA FUND"
+
+st.title(_fund_name())
 st.markdown("Single-beneficiary put-selling tracker &nbsp;|&nbsp; live marks via Massive / yfinance &nbsp;|&nbsp; Reconcile with broker before trading",
             unsafe_allow_html=True)
 st.markdown("---")
