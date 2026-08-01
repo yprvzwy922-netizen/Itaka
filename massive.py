@@ -101,10 +101,15 @@ def chain(tkr: str, expiry: str, option_type: str = "put"):
             mid, px_source, spread = np.nan, "none", np.nan
         if px_source == "quote":
             spread = (ask - bid) / mid
+        # Without an NBBO entitlement (Starter tier) or when the market is shut
+        # there is NO live bid/ask — emit NaN, not a fake $0, so callers that
+        # "default to the bid" fall back to mid (the close) instead of $0.00.
+        bid_out = bid if px_source == "quote" else np.nan
+        ask_out = ask if px_source == "quote" else np.nan
         rows.append({
             "strike":            float(det.get("strike_price") or np.nan),
-            "bid":               bid,
-            "ask":               ask,
+            "bid":               bid_out,
+            "ask":               ask_out,
             "mid":               mid,
             "px_source":         px_source,
             "lastPrice":         close,

@@ -15,7 +15,7 @@ import db
 import bbg_style
 from shared import (get_watchlist, add_to_watchlist, remove_from_watchlist,
                     fetch_spot, fetch_chain, bs_put_delta, bs_call_delta,
-                    ann_yield, ann_roll, moneyness, SECTORS)
+                    ann_yield, ann_roll, moneyness, SECTORS, us_market_open_now)
 
 bbg_style.inject()
 
@@ -174,16 +174,25 @@ if not st.session_state.get("finder_loaded"):
 with st.spinner(f"FETCHING {ticker}..."):
     spot = fetch_spot(ticker)
     opt  = "put" if opt_type == "PUTS" else "call"
-    # prefer_quotes: this page prices ORDERS -> needs real bid/ask (Yahoo
-    # first); Massive close-pricing only as fallback
+    # Source by the clock. During RTH we price ORDERS off real bid/ask (Yahoo
+    # first). When the market is shut (pre-market / after hours / weekend) there
+    # are no live quotes, so prefer Massive's PRIOR-SESSION CLOSE — a usable
+    # reference price in the early hours instead of a blank chain.
+    mkt_open = us_market_open_now()
     chain, expiry, dte = fetch_chain(ticker, target_dte, opt,
-                                     monthly_only=monthly_only, prefer_quotes=True)
+                                     monthly_only=monthly_only, prefer_quotes=mkt_open)
 
 if chain is None or chain.empty:
     st.error(f"No options data found for {ticker}.")
     st.stop()
 
 st.markdown(f"### {ticker}  |  SPOT: ${spot:.2f}  |  EXPIRY: {expiry}  |  DTE: {dte}")
+# When the market's shut we serve Massive's prior-session close (px_source="close")
+# so the finder works pre-open — say so, so closes aren't mistaken for live quotes.
+if "px_source" in chain.columns and (chain["px_source"] == "close").any():
+    st.caption("⏸ NO LIVE QUOTES (market shut, or pre-open) — prices are the **PRIOR SESSION'S CLOSE** "
+               "(Massive day-close), not live quotes. Good for a pre-open read; BID/ASK are blank and the "
+               "order price defaults to the close — re-check the live bid at the open before you send an order.")
 st.markdown("---")
 
 # ── Enrich (vectorized) ───────────────────────────────────────────────────────
@@ -413,7 +422,7 @@ at_action = at1.selectbox("ACTION", ["sell to open", "buy to close", "buy to ope
 at_cts    = at2.number_input("CONTRACTS", min_value=1, step=1, key="at_cts",
                              help="Defaults to the $25k-tranche size")
 at_price  = at3.number_input("PRICE (BID)", min_value=0.0, step=0.01, key="at_price",
-                             help="Defaults to the live bid — adjust to your limit")
+                             help="Defaults to the live bid (or the prior close when the market's shut) — adjust to your limit")
 at4.markdown(" "); at4.markdown(" ")
 if at4.button("＋ ADD", type="primary", use_container_width=True):
     ticket.add_to_ticket(at_action, ticker, expiry, opt, sel_strike, at_price, at_cts)
