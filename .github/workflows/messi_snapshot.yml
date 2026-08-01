@@ -1,9 +1,8 @@
-name: NAV + portfolio snapshot — ITAKA (manual)
+name: NAV + portfolio snapshot — MESSI (manual)
 
-# Manual only. GitHub's scheduled (cron) runs proved unreliable, so trigger this
-# by hand: Actions tab -> "NAV + portfolio snapshot (manual)" -> Run workflow.
-# Each run writes today's snapshot (past days are immutable), building the NAV
-# history the Performance page charts.
+# Manual only. Same script as Itaka, but TABLE_PREFIX=messi_ points it at the
+# messi_* tables in the shared Supabase project. Run by hand each trading day:
+# Actions tab -> "NAV + portfolio snapshot — MESSI (manual)" -> Run workflow.
 on:
   workflow_dispatch: {}
 
@@ -16,9 +15,10 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install yfinance pandas numpy requests
-      - name: NAV + portfolio snapshot
+      - name: NAV + portfolio snapshot (Messi)
         run: python scripts/daily_snapshot.py
         env:
           SUPABASE_URL:    ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
           MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          TABLE_PREFIX:    "messi_"
