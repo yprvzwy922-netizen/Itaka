@@ -283,50 +283,62 @@ if db.configured():
         st.plotly_chart(fig2, use_container_width=True)
 
         # ── Fund vs Nasdaq benchmark (indexed) ───────────────────────────────
-        # QQQ closes are mapped onto the existing snapshot dates at render
-        # time (no schema change; works for all past points).
-        qqq_hist = fetch_hist("QQQ")
-        if not qqq_hist.empty and len(fs) >= 2:
-            closes = {d.isoformat(): float(c)
-                      for d, c in zip(qqq_hist.index.date, qqq_hist["Close"])}
-            bench = fs[["snap_date", "nav_per_unit"]].copy()
-            bench["qqq"] = bench["snap_date"].map(closes)
-            bench = bench.dropna().reset_index(drop=True)
-            if len(bench) >= 2:
-                q0 = float(bench["qqq"].iloc[0])
-                # FUND line = the actual NAV/unit (already 100 at inception since
-                # SEED = $100), so it reads IDENTICALLY to the NAV/UNIT history
-                # chart above. QQQ is indexed to 100 at the first snapshot so both
-                # sit on a comparable scale.
-                fund_idx  = bench["nav_per_unit"] / SEED_NAV_PER_UNIT * 100
-                qqq_idx   = bench["qqq"] / q0 * 100
-                basket_2x = 100 * (1 + 2 * (bench["qqq"] / q0 - 1))   # beta≈2 basket proxy
+        # Prefer the QQQ close captured in each snapshot by the daily job (it
+        # runs on GitHub Actions, where yfinance is reliable). Fall back to a
+        # live fetch, then to a clear message — never silently hide the chart.
+        bench = fs[["snap_date", "nav_per_unit"]].copy()
+        if "qqq_close" in fs.columns and \
+           pd.to_numeric(fs["qqq_close"], errors="coerce").notna().sum() >= 2:
+            bench["qqq"] = pd.to_numeric(fs["qqq_close"], errors="coerce")
+        else:
+            qqq_hist = fetch_hist("QQQ")          # yfinance-only; may be empty on cloud
+            if not qqq_hist.empty:
+                closes = {d.isoformat(): float(c)
+                          for d, c in zip(qqq_hist.index.date, qqq_hist["Close"])}
+                bench["qqq"] = bench["snap_date"].astype(str).map(closes)
+            else:
+                bench["qqq"] = np.nan
+        bench = bench.dropna(subset=["qqq"]).reset_index(drop=True)
 
-                st.markdown("### FUND vs NASDAQ — INDEXED TO 100 (100 = inception)")
-                fig3 = go.Figure()
-                fig3.add_scatter(x=bench["snap_date"], y=basket_2x, name="2× QQQ (≈ YOUR BASKET)",
-                                 mode="lines", line=dict(color="#666666", width=1, dash="dot"))
-                fig3.add_scatter(x=bench["snap_date"], y=qqq_idx, name="QQQ",
-                                 mode="lines+markers", line=dict(color="#ff9900", width=2))
-                fig3.add_scatter(x=bench["snap_date"], y=fund_idx, name="FUND (NAV/UNIT)",
-                                 mode="lines+markers", line=dict(color="#00c8ff", width=2))
-                fig3.add_hline(y=100, line_color="#444444", line_dash="dot")
-                fig3.update_layout(
-                    paper_bgcolor="#0a0a0a", plot_bgcolor="#0d0d0d",
-                    font=dict(family="IBM Plex Mono", color="#cccccc", size=11),
-                    legend=dict(orientation="h", y=1.14),
-                    margin=dict(l=40, r=20, t=30, b=40), height=340,
-                    xaxis=dict(gridcolor="#1e1e1e", type="category"),
-                    yaxis=dict(gridcolor="#1e1e1e"))
-                st.plotly_chart(fig3, use_container_width=True)
-                # Fair window comparison: both measured from the first snapshot.
-                d_f = (fund_idx.iloc[-1] / fund_idx.iloc[0] - 1) * 100
-                d_q = qqq_idx.iloc[-1] - 100
-                st.caption(f"FUND now {fund_idx.iloc[-1]:.2f} (= NAV/unit above). Over the tracked "
-                           f"window: FUND {d_f:+.1f}% vs QQQ {d_q:+.1f}% (implied ≈β2 basket "
-                           f"{2*d_q:+.1f}%). Blue above grey in a selloff = the "
-                           f"premium cushion absorbing beta — the strategy doing its job. Expect blue "
-                           f"to LAG in strong rallies (capped upside): judge over full cycles.")
+        if len(bench) >= 2:
+            q0 = float(bench["qqq"].iloc[0])
+            # FUND line = the actual NAV/unit (already 100 at inception since
+            # SEED = $100). QQQ indexed to 100 at the first snapshot so both
+            # sit on a comparable scale.
+            fund_idx  = bench["nav_per_unit"] / SEED_NAV_PER_UNIT * 100
+            qqq_idx   = bench["qqq"] / q0 * 100
+            basket_2x = 100 * (1 + 2 * (bench["qqq"] / q0 - 1))   # beta≈2 basket proxy
+
+            st.markdown("### FUND vs NASDAQ — INDEXED TO 100 (100 = inception)")
+            fig3 = go.Figure()
+            fig3.add_scatter(x=bench["snap_date"], y=basket_2x, name="2× QQQ (≈ YOUR BASKET)",
+                             mode="lines", line=dict(color="#666666", width=1, dash="dot"))
+            fig3.add_scatter(x=bench["snap_date"], y=qqq_idx, name="QQQ",
+                             mode="lines+markers", line=dict(color="#ff9900", width=2))
+            fig3.add_scatter(x=bench["snap_date"], y=fund_idx, name="FUND (NAV/UNIT)",
+                             mode="lines+markers", line=dict(color="#00c8ff", width=2))
+            fig3.add_hline(y=100, line_color="#444444", line_dash="dot")
+            fig3.update_layout(
+                paper_bgcolor="#0a0a0a", plot_bgcolor="#0d0d0d",
+                font=dict(family="IBM Plex Mono", color="#cccccc", size=11),
+                legend=dict(orientation="h", y=1.14),
+                margin=dict(l=40, r=20, t=30, b=40), height=340,
+                xaxis=dict(gridcolor="#1e1e1e", type="category"),
+                yaxis=dict(gridcolor="#1e1e1e"))
+            st.plotly_chart(fig3, use_container_width=True)
+            # Fair window comparison: both measured from the first snapshot.
+            d_f = (fund_idx.iloc[-1] / fund_idx.iloc[0] - 1) * 100
+            d_q = qqq_idx.iloc[-1] - 100
+            st.caption(f"FUND now {fund_idx.iloc[-1]:.2f} (= NAV/unit above). Over the tracked "
+                       f"window: FUND {d_f:+.1f}% vs QQQ {d_q:+.1f}% (implied ≈β2 basket "
+                       f"{2*d_q:+.1f}%). Blue above grey in a selloff = the "
+                       f"premium cushion absorbing beta — the strategy doing its job. Expect blue "
+                       f"to LAG in strong rallies (capped upside): judge over full cycles.")
+        else:
+            st.markdown("### FUND vs NASDAQ")
+            st.info("Benchmark unavailable — couldn't load QQQ history (the app's server is likely "
+                    "blocked from Yahoo). It fills in automatically once the daily snapshot job has "
+                    "stored QQQ closes for ≥2 days — run it from the Actions tab.")
     else:
         st.markdown("---")
         st.info("NAV history will appear here once the daily snapshot job has run. "

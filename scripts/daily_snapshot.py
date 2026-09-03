@@ -229,7 +229,28 @@ if not should_skip("fund_snapshots"):
         units       = sum(float(c["units_delta"] or 0) for c in flows)
         nav         = contributed + realized + unreal
         nav_per_unit = (nav / units) if units > 0 else 100.0
-        rest("POST", "fund_snapshots", json=[{
+
+        # QQQ benchmark: capture the close HERE (yfinance is reliable in Actions)
+        # and store it, so the app never depends on a live Yahoo call at render
+        # (Streamlit Cloud's server is often blocked). Optional column — if the
+        # ALTER hasn't been run yet, skip it cleanly and behave exactly as before.
+        try:
+            rest("GET", "fund_snapshots", params={"select": "qqq_close", "limit": 1})
+            has_qqq_col = True
+        except Exception:
+            has_qqq_col = False
+
+        qqq_closes = {}
+        if has_qqq_col:
+            try:
+                qh = yf.Ticker("QQQ").history(period="1y")
+                if not qh.empty:
+                    qqq_closes = {d.isoformat(): round(float(c), 4)
+                                  for d, c in zip(qh.index.date, qh["Close"])}
+            except Exception as e:
+                print(f"  QQQ history fetch failed: {e}")
+
+        row = {
             "snap_date": TODAY,
             "nav": round(nav, 2),
             "units": round(units, 4),
@@ -237,7 +258,31 @@ if not should_skip("fund_snapshots"):
             "contributed": round(contributed, 2),
             "realized_pnl": round(realized, 2),
             "unreal_pnl": round(unreal, 2),
-        }], prefer="resolution=merge-duplicates,return=minimal")
+        }
+        if has_qqq_col:
+            row["qqq_close"] = qqq_closes.get(TODAY)   # None if today's bar isn't in yet
+        rest("POST", "fund_snapshots", json=[row],
+             prefer="resolution=merge-duplicates,return=minimal")
         print(f"fund snapshot {TODAY}: written (values redacted)")
+
+        # Backfill QQQ close on any past rows that lack it — self-heals the whole
+        # history so the benchmark works from the first snapshot, not just today.
+        if has_qqq_col and qqq_closes:
+            try:
+                rows = rest("GET", "fund_snapshots",
+                            params={"select": "snap_date,qqq_close"}) or []
+                filled = 0
+                for r in rows:
+                    if r.get("qqq_close") is None:
+                        c = qqq_closes.get(str(r["snap_date"]))
+                        if c is not None:
+                            rest("PATCH", "fund_snapshots",
+                                 params={"snap_date": f"eq.{r['snap_date']}"},
+                                 json={"qqq_close": c}, prefer="return=minimal")
+                            filled += 1
+                if filled:
+                    print(f"  QQQ backfilled on {filled} past snapshot(s)")
+            except Exception as e:
+                print(f"  QQQ backfill skipped: {e}")
     except Exception as e:
         print(f"fund snapshot skipped: {e}")

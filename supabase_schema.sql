@@ -45,7 +45,8 @@ create table if not exists portfolio_snapshots (
 create table if not exists fund_snapshots (
   snap_date date primary key, nav double precision, units double precision,
   nav_per_unit double precision, contributed double precision,   -- contributed = net contributed
-  realized_pnl double precision, unreal_pnl double precision
+  realized_pnl double precision, unreal_pnl double precision,
+  qqq_close double precision                                     -- benchmark close, captured by the daily job
 );
 
 -- App auth is a shared password gate (fails closed), not Supabase RLS.
