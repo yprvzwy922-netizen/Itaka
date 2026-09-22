@@ -344,6 +344,50 @@ if db.configured():
         st.info("NAV history will appear here once the daily snapshot job has run. "
                 "Each trading day adds one point.")
 
+# ── Weekly report (one-click, in-app) ─────────────────────────────────────────
+st.markdown("---")
+st.markdown("### WEEKLY REPORT")
+st.caption("Build the 3-page report (Performance · Benchmark vs QQQ · The Book) from the current data — "
+           "no screenshots, no email. The open book is marked with the app's live feed; the benchmark uses the "
+           "stored QQQ closes.")
+
+def _rep_fund_name():
+    try:
+        return str(st.secrets.get("FUND_NAME", "") or "ITAKA FUND")
+    except Exception:
+        return "ITAKA FUND"
+
+if st.button("📄 GENERATE WEEKLY REPORT", type="primary"):
+    _rp = os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts")
+    if _rp not in sys.path:
+        sys.path.insert(0, _rp)
+    try:
+        import app_report
+        with st.spinner("Building report — marking the open book…"):
+            _html = app_report.build_report_html(db.load_fund_snapshots(), db.get_trades_df(), _rep_fund_name())
+        if not _html:
+            st.warning("Need at least 2 daily snapshots to build the report.")
+            st.session_state.pop("_report_html", None)
+        else:
+            st.session_state["_report_html"] = _html
+    except Exception as e:
+        st.error(f"Report build failed: {e}")
+
+if st.session_state.get("_report_html"):
+    _html = st.session_state["_report_html"]
+    _fname = f"{_rep_fund_name().split()[0].lower()}_report_{datetime.date.today().isoformat()}"
+    rc1, rc2, _ = st.columns([2, 2, 6])
+    rc1.download_button("⬇ DOWNLOAD (HTML)", _html, _fname + ".html", "text/html", use_container_width=True)
+    try:
+        import weasyprint
+        _pdf = weasyprint.HTML(string=_html).write_pdf()
+        rc2.download_button("⬇ DOWNLOAD (PDF)", _pdf, _fname + ".pdf", "application/pdf", use_container_width=True)
+    except Exception:
+        rc2.caption("PDF export not available on this deployment — download the HTML and use your browser's "
+                    "Print → Save as PDF (it looks identical).")
+    import streamlit.components.v1 as _components
+    _components.html(_html, height=900, scrolling=True)
+
 st.markdown("---")
 st.caption("NAV = NET CAPITAL IN + REALIZED + UNREALIZED  |  UNITS PRICED AT NAV/UNIT ON FLOW DATE  |  "
            "TWR = NAV/UNIT − 100  |  UNREALIZED MARKED AT LIVE OPTION MID / SPOT")
