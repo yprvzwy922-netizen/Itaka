@@ -1,11 +1,12 @@
 name: Weekly report email — MESSI
 
-# Best-effort Sunday auto-send + a reliable manual trigger (Run workflow) for any
-# week the cron slips. Captures a fresh snapshot, reconstructs the book from the
-# trade log, builds the 3-page PDF, and emails it via Gmail.
+# PAUSED: manual only. The Sunday cron is commented out so it doesn't fail weekly
+# while the Gmail secrets (GMAIL_USER / GMAIL_APP_PASSWORD / EMAIL_TO) are unset.
+# To resume automatic Sunday sends, uncomment the schedule block below.
+# Reconstructs the book from the trade log, builds the 3-page PDF, emails via Gmail.
 on:
-  schedule:
-    - cron: "0 14 * * 0"     # Sundays ~14:00 UTC (~10am ET) — GitHub cron is best-effort
+  # schedule:
+  #   - cron: "0 14 * * 0"   # Sundays ~14:00 UTC (~10am ET) — best-effort; re-enable when secrets are set
   workflow_dispatch: {}
 
 jobs:
