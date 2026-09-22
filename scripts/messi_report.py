@@ -307,11 +307,13 @@ tr.realized td { background:#141414; color:#bbb; font-size:11px; }
 
 
 def find_chrome():
+    env=os.environ.get("CHROME_PATH") or os.environ.get("CHROME_BIN")
+    if env and (os.path.isfile(env) or which(env)): return env
     for c in ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-              "google-chrome","chromium","chromium-browser",
+              "google-chrome","google-chrome-stable","chrome","chromium","chromium-browser",
               "/Applications/Chromium.app/Contents/MacOS/Chromium"]:
         if os.path.isfile(c) or which(c): return c
-    raise RuntimeError("Google Chrome not found — install it for HTML→PDF.")
+    raise RuntimeError("Chrome not found — set CHROME_PATH or install Google Chrome.")
 
 
 def main():

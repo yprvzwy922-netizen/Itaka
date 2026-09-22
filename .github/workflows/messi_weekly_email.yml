@@ -1,0 +1,42 @@
+name: Weekly report email — MESSI
+
+# Best-effort Sunday auto-send + a reliable manual trigger (Run workflow) for any
+# week the cron slips. Captures a fresh snapshot, reconstructs the book from the
+# trade log, builds the 3-page PDF, and emails it via Gmail.
+on:
+  schedule:
+    - cron: "0 14 * * 0"     # Sundays ~14:00 UTC (~10am ET) — GitHub cron is best-effort
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - id: chrome
+        uses: browser-actions/setup-chrome@v1
+      - run: pip install numpy pandas requests yfinance
+
+      - name: Capture today's snapshot
+        run: python scripts/daily_snapshot.py
+        env:
+          SUPABASE_URL:    ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
+          MASSIVE_API_KEY: ${{ secrets.MASSIVE_API_KEY }}
+          TABLE_PREFIX:    "messi_"
+
+      - name: Generate + email weekly report
+        run: python scripts/weekly_email.py
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          MASSIVE_API_KEY:    ${{ secrets.MASSIVE_API_KEY }}
+          TABLE_PREFIX:       "messi_"
+          FUND_NAME:          "Messi se toma una pesi"
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO:           ${{ secrets.EMAIL_TO }}
+          CHROME_PATH:        ${{ steps.chrome.outputs.chrome-path }}
