@@ -374,19 +374,36 @@ if st.button("📄 GENERATE WEEKLY REPORT", type="primary"):
         st.error(f"Report build failed: {e}")
 
 if st.session_state.get("_report_html"):
+    import base64
+    import streamlit.components.v1 as _components
     _html = st.session_state["_report_html"]
     _fname = f"{_rep_fund_name().split()[0].lower()}_report_{datetime.date.today().isoformat()}"
+
+    # Primary PDF path: the browser's own print engine — vector, identical to the
+    # file, and works on any deployment with no server-side libraries. Opens the
+    # report in a new tab and auto-triggers Print → the user picks "Save as PDF".
+    _b64 = base64.b64encode(_html.encode("utf-8")).decode("ascii")
+    _components.html(
+        '<button onclick="_openRep()" style="width:100%;padding:11px;background:#00c8ff;border:none;'
+        'border-radius:6px;color:#00121a;font-weight:700;font-family:monospace;cursor:pointer;font-size:14px;">'
+        '🖨  SAVE AS PDF</button>'
+        '<div style="font-family:monospace;font-size:11px;color:#888;margin-top:6px;">Opens the report in a new tab '
+        'and brings up Print — choose <b>Save as PDF</b> (Letter size, identical to the file).</div>'
+        '<script>function _openRep(){var h=decodeURIComponent(escape(window.atob("' + _b64 + '")));'
+        'var w=window.open("","_blank");if(!w){alert("Allow pop-ups for this site, then click SAVE AS PDF again.");return;}'
+        'w.document.open();w.document.write(h);w.document.close();w.focus();setTimeout(function(){w.print();},600);}</script>',
+        height=88)
+
     rc1, rc2, _ = st.columns([2, 2, 6])
     rc1.download_button("⬇ DOWNLOAD (HTML)", _html, _fname + ".html", "text/html", use_container_width=True)
-    try:
+    try:                                  # bonus: direct PDF download if WeasyPrint is available
         import weasyprint
         _pdf = weasyprint.HTML(string=_html).write_pdf()
         rc2.download_button("⬇ DOWNLOAD (PDF)", _pdf, _fname + ".pdf", "application/pdf", use_container_width=True)
     except Exception:
-        rc2.caption("PDF export not available on this deployment — download the HTML and use your browser's "
-                    "Print → Save as PDF (it looks identical).")
-    import streamlit.components.v1 as _components
-    _components.html(_html, height=900, scrolling=True)
+        pass
+
+    _components.html(_html, height=850, scrolling=True)
 
 st.markdown("---")
 st.caption("NAV = NET CAPITAL IN + REALIZED + UNREALIZED  |  UNITS PRICED AT NAV/UNIT ON FLOW DATE  |  "
