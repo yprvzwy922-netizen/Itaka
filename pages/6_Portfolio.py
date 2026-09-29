@@ -451,59 +451,51 @@ styled_book = (disp_book.style
     .map(color_action,     subset=["ACTION"])
     .format(fmt, na_rep="—"))
 
-st.dataframe(styled_book, use_container_width=True, hide_index=True,
-             column_config={"TICKER": st.column_config.Column(pinned=True)})
+_book_event = st.dataframe(styled_book, use_container_width=True, hide_index=True,
+             column_config={"TICKER": st.column_config.Column(pinned=True)},
+             on_select="rerun", selection_mode="multi-row", key="book_sel")
 st.caption("DELTA: short put = +d | short call = -d | long stock = +1 | covered call = -d when shares are a separate "
            "LONG STOCK row, else 1-d (combined)  |  IV from live option chain, fallback 35%  |  "
            "COVERED CALL UNREAL PNL = option leg only")
 st.caption("PROFIT-TAKE PROCEDURE (MANUAL §5.1): GTC BUY-TO-CLOSE AT 50% ON ENTRY → CLOSE 1/2 AT 50%, 1/4 AT 75%, REST BY 90% OR MANAGE-BY DATE (1M @ 21 DTE, 3M @ 45 DTE). "
            "YIELD LEFT = ANNUALIZED YIELD OF PREMIUM STILL ON THE TABLE — IF < 15% AFTER THE 50% TIER, CLOSE AND REDEPLOY.")
 
-# ── Close a position → Order Ticket ───────────────────────────────────────────
-# Pick an open OPTION position and drop its CLOSING leg (buy-to-close for shorts,
-# sell-to-close for longs) into the Order Ticket at the current mid. Stock is
-# excluded (no option ticket line). This builds the broker message only — it does
-# NOT close the trade in the log; do that in the Trade Log after the fill.
-st.markdown("### CLOSE A POSITION → ORDER TICKET")
-_cl = book[~book["_IS_STOCK"]].copy() if not book.empty else book
-if _cl.empty:
-    st.caption("No option positions to close. (Stock is closed at the broker.)")
-else:
-    def _clabel(i):
-        r = _cl[_cl["ID"] == i].iloc[0]
-        k = r["SHORT STRIKE"]
-        leg = f" {'P' if r['_IS_PUT'] else 'C'}{k:g}" if (pd.notna(k) and k) else ""
-        m = r["CURRENT MID"]
-        mp = f"  @ ${float(m):.2f}" if pd.notna(m) else ""
-        return f"#{int(i)}  {r['TICKER']}  {r['STRATEGY']}{leg}  {r['EXPIRY']}  x{int(r['CONTRACTS'])}{mp}"
+# ── Close selected → Order Ticket ─────────────────────────────────────────────
+# Tick positions in the OPEN POSITIONS table above, then add their CLOSING legs
+# (buy-to-close for shorts, sell-to-close for longs) to the Order Ticket at the
+# current mark. Stock rows are ignored (no option ticket line). Builds the order
+# only — close the trade in the Trade Log after the fill.
+st.markdown("### CLOSE SELECTED → TICKET")
+try:
+    _sel_rows = list(_book_event.selection["rows"])
+except Exception:
+    _sel_rows = []
+_sel     = book.iloc[_sel_rows] if _sel_rows else book.iloc[0:0]
+_sel_opt = _sel[~_sel["_IS_STOCK"]] if not _sel.empty else _sel
+_n       = len(_sel_opt)
 
-    cx1, cx2, cx3, cx4 = st.columns([4, 1.3, 1.3, 2])
-    _cid   = cx1.selectbox("POSITION TO CLOSE", _cl["ID"].tolist(), format_func=_clabel, key="close_pos")
-    _row   = _cl[_cl["ID"] == _cid].iloc[0]
-    _short = bool(_row["_IS_SHORT"])
-    _spread = bool(_row.get("_IS_SPREAD", False))
-    _action = "buy to close" if _short else "sell to close"
-    _opt    = "put" if bool(_row["_IS_PUT"]) else "call"
-    _strike = float(_row["SHORT STRIKE"]) if pd.notna(_row["SHORT STRIKE"]) else 0.0
-    _mid    = float(_row["CURRENT MID"]) if pd.notna(_row["CURRENT MID"]) else 0.0
-    _maxc   = int(_row["CONTRACTS"])
-    _cts = int(cx2.number_input("CONTRACTS", min_value=1, max_value=_maxc, value=_maxc, step=1, key="close_cts",
-                                help="Close part or all of the position."))
-    _px  = cx3.number_input("LIMIT ($)", min_value=0.0, value=round(_mid, 2), step=0.05, key="close_px",
-                            help="Defaults to the current mid (the buy-back cost). Adjust to your limit.")
-    cx4.markdown(" "); cx4.markdown(" ")
-    if cx4.button(f"＋ ADD {_action.upper()}", type="primary", use_container_width=True):
-        ticket.add_to_ticket(_action, str(_row["TICKER"]), str(_row["EXPIRY"]), _opt, _strike, _px, _cts)
-        st.success(f"Added: {_action} {_cts} × {_row['TICKER']} {_row['EXPIRY']} "
-                   f"{'P' if _opt == 'put' else 'C'}{_strike:g} @ ${_px:.2f}")
-    if _spread:
-        st.warning("This is a spread — only the short leg's close is added. Add the long leg's closing line "
-                   "manually in the Option Finder / Order Ticket.")
-    b_view, _ = st.columns([2, 8])
-    if b_view.button(f"→ VIEW ORDER TICKET ({len(ticket.get_ticket())})", use_container_width=True):
-        st.switch_page("pages/8_Order_Ticket.py")
-    st.caption("Builds the broker-ready close order only — it does NOT close the trade in the log. "
-               "After the fill, close it in the Trade Log so NAV/realized P&L update.")
+b_add, b_view, _ = st.columns([3, 3, 4])
+if b_add.button(f"＋ ADD {_n} TO TICKET (CLOSE)", type="primary", use_container_width=True, disabled=(_n == 0)):
+    _added, _skip = 0, []
+    for _, r in _sel_opt.iterrows():
+        m = r["CURRENT MID"]
+        if pd.isna(m):
+            _skip.append(str(r["TICKER"])); continue
+        act = "buy to close" if bool(r["_IS_SHORT"]) else "sell to close"
+        opt = "put" if bool(r["_IS_PUT"]) else "call"
+        stk = float(r["SHORT STRIKE"]) if pd.notna(r["SHORT STRIKE"]) else 0.0
+        ticket.add_to_ticket(act, str(r["TICKER"]), str(r["EXPIRY"]), opt, stk, float(m), int(r["CONTRACTS"]))
+        _added += 1
+    if _added:
+        st.success(f"Added {_added} close order(s) to the ticket.")
+    if _skip:
+        st.warning(f"Skipped (no live mark): {', '.join(_skip)} — add these in the ticket with a manual price.")
+if b_view.button(f"→ OPEN ORDER TICKET ({len(ticket.get_ticket())})", use_container_width=True):
+    st.switch_page("pages/8_Order_Ticket.py")
+_stk_ignored = len(_sel) - _n
+st.caption("BUY-TO-CLOSE (shorts) / SELL-TO-CLOSE (longs) at the current mark. Review & send on the ORDER TICKET page. "
+           "Closing here builds the order only — close the trade in the Trade Log after the fill."
+           + (f"  ({_stk_ignored} stock row(s) ignored.)" if _stk_ignored else ""))
 
 # ── Held stock — covered-call capacity (consolidated per ticker) ─────────────
 # Multiple Long Stock lots per name are possible (each assignment adds a row),
