@@ -12,8 +12,8 @@ import streamlit as st
 import bbg_style
 import db
 import ticket
-from shared import (get_watchlist, fetch_spot, bs_put_delta, bs_call_delta,
-                    bs_price, fetch_option_live)
+from shared import (get_watchlist, DEFAULT_WATCHLIST, fetch_spot, bs_put_delta,
+                    bs_call_delta, bs_price, fetch_option_live)
 import datetime
 
 bbg_style.inject()
@@ -73,7 +73,10 @@ if trades.empty or (trades["STATUS"] == "OPEN").sum() == 0:
 
 open_trades = trades[trades["STATUS"] == "OPEN"].copy()
 wl = get_watchlist()
-wl_map = {w["ticker"]: w for w in wl}
+# Fall back to the code's default list so sector/bucket resolve even for names
+# that haven't been synced into the live Supabase watchlist table yet.
+wl_map = {w["ticker"]: w for w in DEFAULT_WATCHLIST}
+wl_map.update({w["ticker"]: w for w in wl})
 
 # Tickers where we already hold the shares as their own Long Stock row — a
 # covered call on these is just the SHORT CALL leg (the +1 stock delta is
@@ -262,8 +265,13 @@ for _i, (_, t) in enumerate(open_trades.iterrows()):
         # Stock-secured, not cash-secured — no separate cash deployed here
         cash_sec = 0.0
         max_loss = stored_loss if stored_loss is not None else 0.0
+    elif not is_short:
+        # Long single-leg option (Long Call / Long Put hedge): capital at risk =
+        # max loss = the premium PAID. Never strike notional — nothing is secured.
+        cash_sec = stored_cash if stored_cash is not None else prem * 100 * ctrs
+        max_loss = stored_loss if stored_loss is not None else cash_sec
     else:
-        # Cash-secured put / wheel (and long single legs): strike * 100 is correct
+        # Cash-secured put / wheel: strike * 100 is the collateral
         cash_sec = stored_cash if stored_cash is not None else (
             short_strike * 100 * ctrs if short_strike > 0 else 0)
         max_loss = stored_loss if stored_loss is not None else cash_sec
@@ -338,7 +346,6 @@ else:
                    if CAP_MODE.startswith("Auto") else ""))
 
 # ── Portfolio KPIs (single row, cash included) ────────────────────────────────
-total_deployed = book["CASH AT RISK"].sum()
 total_max_loss = book["MAX LOSS"].sum()
 total_ddelta   = pd.to_numeric(book["$ DELTA"], errors="coerce").sum()   # used by risk checks
 short_opt      = book[(~book["_IS_STOCK"]) & (book["_IS_SHORT"])]
@@ -350,6 +357,7 @@ total_premium  = (pd.to_numeric(short_opt["PREM RECEIVED"], errors="coerce") *
 # entry), otherwise cash is understated by their premium / entry value.
 stock_mv = 0.0
 short_liab = 0.0
+long_opt_mv = 0.0
 for _, r in book.iterrows():
     if r["_IS_STOCK"]:
         s = r["SPOT"]
@@ -361,8 +369,18 @@ for _, r in book.iterrows():
         if cm is None or (isinstance(cm, float) and np.isnan(cm)):
             cm = r["_PREM"] or 0           # unmarked -> NAV assumes flat (mid = premium)
         short_liab += cm * 100 * r["CONTRACTS"]
-acct_cash      = TOTAL_CAPITAL - stock_mv + short_liab
-reserved_cash  = book.loc[~book["_IS_STOCK"], "CASH AT RISK"].sum()
+    else:
+        # Long option (Long Call / Long Put): an ASSET already paid for — the
+        # premium left the account, so it reduces cash. It is NOT cash-secured
+        # like a short. Mark at live mid, fall back to the premium paid.
+        cm = r["CURRENT MID"]
+        if cm is None or (isinstance(cm, float) and np.isnan(cm)):
+            cm = r["_PREM"] or 0
+        long_opt_mv += cm * 100 * r["CONTRACTS"]
+acct_cash      = TOTAL_CAPITAL - stock_mv - long_opt_mv + short_liab
+# Reserved = cash-secured collateral on SHORT options only. Long options are spent
+# premium (already out of cash above), so they aren't reserved against it.
+reserved_cash  = book.loc[(~book["_IS_STOCK"]) & (book["_IS_SHORT"]), "CASH AT RISK"].sum()
 available_cash = acct_cash - reserved_cash
 
 # % deployed is measured against CASH (puts are cash-secured), NOT NAV — NAV
@@ -376,9 +394,11 @@ k1.metric("TOTAL CAPITAL",     f"${TOTAL_CAPITAL:,.0f}",
           help="The base all risk caps are measured against. " + cap_note)
 k2.metric("TOTAL CASH (T-BILLS)", f"${acct_cash:,.0f}",
           help="Fund value − stock held + premium cash collected. The actual cash in the account.")
-k3.metric("CAPITAL DEPLOYED",  f"${total_deployed:,.0f}", f"{pct_deployed:.1%}",
-          help="Collateral securing open puts = the max capital at risk (cash-secured = strike×100; "
-               "spreads = max loss; covered calls = $0). Same figure as total max loss.")
+k3.metric("CAPITAL DEPLOYED",  f"${reserved_cash:,.0f}", f"{pct_deployed:.1%}",
+          help="Cash-secured collateral on SHORT options (cash-secured put = strike×100; spreads = "
+               "max loss; covered calls = $0). EXCLUDES assigned stock (stock-secured) and LONG options "
+               "— their premium is already spent, so it reduces TOTAL CASH rather than being reserved. "
+               "So the tiles reconcile: TOTAL CASH − CAPITAL DEPLOYED = AVAILABLE CASH.")
 k4.metric("AVAILABLE CASH",    f"${available_cash:,.0f}",
           help="Dry powder free to deploy into new cash-secured puts (total cash − collateral reserved).")
 k5.metric("PREMIUM RECEIVED",  f"${total_premium:,.0f}",
@@ -442,7 +462,18 @@ fmt = {
     "% MAX PROFIT":  "{:.0%}",
     "YIELD LEFT":    "{:.1%}",
 }
-disp_book = book[[c for c in book.columns if not c.startswith("_") and c != "ID"]]
+# Strategy filter — applies to the DISPLAYED table only (the KPIs, stress test and
+# risk gauges above always use the full book).
+_strat_opts = sorted(book["STRATEGY"].dropna().unique().tolist())
+_sel_strats = st.segmented_control(
+    "SHOW", _strat_opts, selection_mode="multi", default=_strat_opts, key="pos_filter",
+    help="Filter the table to these position types. Deselect everything to show all again. "
+         "The metrics and risk checks above always use the full book.")
+_active = _sel_strats if _sel_strats else _strat_opts
+fbook = book[book["STRATEGY"].isin(_active)].reset_index(drop=True)
+if len(fbook) < len(book):
+    st.caption(f"Showing {len(fbook)} of {len(book)} open positions.")
+disp_book = fbook[[c for c in fbook.columns if not c.startswith("_") and c != "ID"]]
 styled_book = (disp_book.style
     .map(color_dte,        subset=["DTE LEFT"])
     .map(color_pnl,        subset=["UNREAL PNL"])
@@ -470,7 +501,7 @@ try:
     _sel_rows = list(_book_event.selection["rows"])
 except Exception:
     _sel_rows = []
-_sel     = book.iloc[_sel_rows] if _sel_rows else book.iloc[0:0]
+_sel     = fbook.iloc[_sel_rows] if _sel_rows else fbook.iloc[0:0]
 _sel_opt = _sel[~_sel["_IS_STOCK"]] if not _sel.empty else _sel
 _n       = len(_sel_opt)
 
@@ -578,20 +609,26 @@ st.markdown("---")
 # ── Stress test — basket shock, both directions (manual §9 on the live book) ──
 st.markdown("### STRESS TEST — BASKET SHOCK")
 
-sm1, sm2 = st.columns([3, 7])
-stress_mode = sm1.radio("VALUATION MODE", ["HOLD TO EXPIRY", "INSTANT SHOCK"],
-                        horizontal=True,
-                        help="HOLD TO EXPIRY: each option valued at intrinsic on ITS OWN expiry "
-                             "(P&L vs entry premium — matches the payoff diagrams). "
-                             "INSTANT SHOCK: all positions repriced TODAY with Black-Scholes at "
-                             "their own remaining DTE and live IV — one common horizon, which is "
-                             "how a book with multiple expiries is stressed consistently.")
+sm1, sm2 = st.columns([4, 6])
+with sm1:
+    stress_mode = st.segmented_control(
+        "VALUATION MODE", ["INSTANT SHOCK", "HOLD TO EXPIRY"],
+        default="INSTANT SHOCK", selection_mode="single",
+        help="INSTANT SHOCK: every position repriced with Black-Scholes at live IV, on its "
+             "remaining DTE minus the TIME HORIZON — one common clock (expired legs settle to "
+             "intrinsic). HOLD TO EXPIRY: each option at intrinsic on ITS OWN expiry (final P&L "
+             "vs entry — matches the payoff diagrams; the time horizon is ignored).")
+    stress_mode = stress_mode or "INSTANT SHOCK"
+with sm2:
+    weeks_fwd = st.slider("TIME HORIZON — WEEKS FORWARD", 0, 12, 0,
+        disabled=(stress_mode == "HOLD TO EXPIRY"),
+        help="Roll the clock forward: short premium (puts & covered calls) is harvested as those "
+             "legs decay and expire, while any long options bleed theta. Applies to INSTANT SHOCK.")
 
-st.caption("Stock legs included: Long Stock P&L vs entry price; covered calls assume you own 100 sh/contract "
-           "(stock leg measured from current spot — entry basis unknown). IV held constant in INSTANT mode "
-           "(a real crash lifts IV, making short-option marks temporarily worse). T-bill interest not modeled.")
+st.caption("Stock legs: Long Stock P&L vs entry; covered calls assume 100 sh/contract (stock leg from current "
+           "spot). IV held constant (a real crash lifts IV, worsening short-option marks). T-bill interest not modeled.")
 
-def book_pnl_at(shock: float, mode: str) -> float:
+def book_pnl_at(shock: float, mode: str, weeks: int = 0) -> float:
     total = 0.0
     for _, r in book.iterrows():
         spot_r = r["SPOT"]
@@ -618,12 +655,13 @@ def book_pnl_at(shock: float, mode: str) -> float:
 
         kind = "put" if r["_IS_PUT"] else "call"
         if mode == "INSTANT SHOCK":
-            v = bs_price(s, k, r["_IV"], r["_DTE_REM"], kind=kind)
+            dte_eff = max(0.0, (r["_DTE_REM"] or 0) - weeks * 7)   # roll the clock forward
+            v = bs_price(s, k, r["_IV"], dte_eff, kind=kind)
             if r["_IS_SPREAD"] and kl:
-                v -= bs_price(s, kl, r["_IV"], r["_DTE_REM"], kind=kind)
-            # Anchor to the live mark: shift the BS curve so 0% shock reprices
-            # to the actual current mid (removes BS-vs-market model gap). Single
-            # options only — spreads don't store a long-leg mark.
+                v -= bs_price(s, kl, r["_IV"], dte_eff, kind=kind)
+            # Anchor the today/0% point to the live mark (removes the BS-vs-market
+            # model gap). Uses CURRENT DTE, so rolling the horizon forward shows
+            # real theta decay rather than being cancelled out. Single options only.
             cm = r["CURRENT MID"]
             if not r["_IS_SPREAD"] and cm is not None and not (isinstance(cm, float) and np.isnan(cm)):
                 v += cm - bs_price(spot_r, k, r["_IV"], r["_DTE_REM"], kind=kind)
@@ -636,13 +674,20 @@ def book_pnl_at(shock: float, mode: str) -> float:
         total += pnl * 100 * ctrs
     return total
 
+_wk = weeks_fwd if stress_mode == "INSTANT SHOCK" else 0
 shocks     = np.arange(-0.60, 0.605, 0.01)
-curve      = [book_pnl_at(s, stress_mode) for s in shocks]
+# Total fund P&L = banked realized + open-position unrealized at the shocked spot,
+# so the curve and the drawdown check sit on the same basis as TOTAL_CAPITAL (which
+# already includes realized). Realized is a constant offset: it shifts the curve
+# vertically but does not change its shape or shock sensitivity.
+curve      = [realized_all + book_pnl_at(s, stress_mode, _wk) for s in shocks]
 sel_shock  = st.slider("BASKET SHOCK %", -60, 60, 0, 1) / 100
-pnl_at_sel = book_pnl_at(sel_shock, stress_mode)
+pnl_at_sel = realized_all + book_pnl_at(sel_shock, stress_mode, _wk)
 
+_hz = f"  ·  +{_wk}W" if _wk else ""
 s1, s2, s3 = st.columns(3)
-s1.metric(f"P&L AT {sel_shock:+.0%}", f"${pnl_at_sel:,.0f}")
+s1.metric(f"P&L AT {sel_shock:+.0%}{_hz}", f"${pnl_at_sel:,.0f}",
+          help="Total fund P&L = realized (banked) + unrealized at this shock.")
 s2.metric("VS TOTAL CAPITAL", f"{pnl_at_sel/TOTAL_CAPITAL:+.1%}")
 dd_ok = pnl_at_sel/TOTAL_CAPITAL > -0.30
 s3.metric("DRAWDOWN TOLERANCE (20-30%)", "WITHIN" if dd_ok else "BREACHED")
@@ -661,7 +706,7 @@ fig_st.update_layout(
     font=dict(family="IBM Plex Mono", color="#cccccc", size=11),
     margin=dict(l=40, r=20, t=20, b=40), height=380, showlegend=False,
     xaxis=dict(title="BASKET MOVE %", gridcolor="#1e1e1e", ticksuffix="%"),
-    yaxis=dict(title=f"P&L ({stress_mode})", gridcolor="#1e1e1e", tickprefix="$"))
+    yaxis=dict(title=f"P&L ({stress_mode}{', +'+str(_wk)+'w' if _wk else ''})", gridcolor="#1e1e1e", tickprefix="$"))
 st.plotly_chart(fig_st, use_container_width=True)
 
 st.markdown("---")

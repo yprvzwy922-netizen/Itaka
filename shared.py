@@ -267,15 +267,19 @@ def fetch_hist(tkr):
         return pd.DataFrame()
 
 def _as_date(d):
-    """Coerce datetime.date / datetime.datetime / pandas.Timestamp -> date."""
+    """Coerce datetime.date / datetime.datetime / pandas.Timestamp / str -> date.
+    IMPORTANT: datetime.datetime AND pd.Timestamp are subclasses of datetime.date,
+    so check datetime FIRST and call .date() — otherwise a Timestamp falls through
+    unchanged and a later `Timestamp >= date` comparison raises under modern
+    pandas ('Cannot compare Timestamp with datetime.date')."""
     if d is None:
         return None
-    if hasattr(d, "date") and not isinstance(d, datetime.date):
-        return d.date()                 # datetime / Timestamp
-    if isinstance(d, datetime.date):
-        return d                        # already a date
+    if isinstance(d, datetime.datetime):    # datetime.datetime AND pd.Timestamp
+        return d.date()
+    if isinstance(d, datetime.date):        # a pure date already
+        return d
     try:
-        return pd.Timestamp(d).date()   # strings, numpy datetimes, etc.
+        return pd.Timestamp(d).date()       # strings, numpy datetimes, etc.
     except Exception:
         return None
 

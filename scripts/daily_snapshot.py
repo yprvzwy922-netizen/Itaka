@@ -9,6 +9,7 @@ Needs env vars: SUPABASE_URL, SUPABASE_KEY.
 Self-contained on purpose — no streamlit import (shared.py needs a Streamlit runtime).
 """
 import datetime
+import math
 import os
 import sys
 from zoneinfo import ZoneInfo
@@ -104,9 +105,11 @@ def last_trading_day():
     holidays roll back to the prior session (SPY has no bar for those)."""
     now_et = datetime.datetime.now(ZoneInfo("America/New_York"))
     try:
-        h = yf.Ticker("SPY").history(period="7d")
-        if not h.empty:
-            return h.index[-1].date()
+        # Last bar with a real close: Yahoo sometimes appends an all-NaN row in the
+        # evening, which would otherwise stamp the snapshot with a bogus date.
+        c = yf.Ticker("SPY").history(period="7d").get("Close", pd.Series(dtype=float)).dropna()
+        if not c.empty:
+            return min(c.index[-1].date(), now_et.date())   # never a future date
     except Exception:
         pass
     d = now_et.date()
@@ -149,8 +152,11 @@ for tkr in tickers:
         hist = t.history(period="1y")
         if hist.empty:
             continue
-        spot = float(hist["Close"].iloc[-1])
-        ret = hist["Close"].pct_change().dropna()
+        close = hist["Close"].dropna()          # skip Yahoo's occasional NaN rows
+        if close.empty:
+            continue
+        spot = float(close.iloc[-1])
+        ret = close.pct_change().dropna()
         rv = (ret.rolling(21).std() * np.sqrt(252)).dropna()
         rv21 = float(rv.iloc[-1]) if len(rv) else None
         rv_rank = (float(np.clip((rv.iloc[-1] - rv.min()) / (rv.max() - rv.min()), 0, 1))
@@ -187,9 +193,9 @@ for t in open_t:
             if mmark and prem > 0:
                 unreal += (mmark - prem) * ctrs
                 continue
-            h = yf.Ticker(tkr).history(period="2d")
-            if not h.empty and prem > 0:
-                unreal += (float(h["Close"].iloc[-1]) - prem) * ctrs
+            c = yf.Ticker(tkr).history(period="5d").get("Close", pd.Series(dtype=float)).dropna()
+            if not c.empty and prem > 0:
+                unreal += (float(c.iloc[-1]) - prem) * ctrs
             continue
         if mmark:
             is_short = strat not in ("Long Put (Hedge)", "Long Call")
@@ -203,11 +209,15 @@ for t in open_t:
 
         # Identical time-aware ladder to the live app header (mark_mid).
         mid = mark_mid(tkr, strike, expiry, opt_type)
-        if mid is None:
+        if mid is None or not math.isfinite(mid):
             continue                               # no usable price -> leave flat
         unreal += ((prem - mid) if is_short else (mid - prem)) * 100 * ctrs
     except Exception as e:
         print(f"  mark {t.get('ticker')}: {e}")
+
+# A NaN can't be stored and would poison NAV — fail loudly rather than write it.
+if not math.isfinite(unreal):
+    sys.exit("unrealized P&L came out non-finite — not writing portfolio/fund snapshots")
 
 if not should_skip("portfolio_snapshots"):
     rest("POST", "portfolio_snapshots", json=[{
@@ -246,7 +256,8 @@ if not should_skip("fund_snapshots"):
                 qh = yf.Ticker("QQQ").history(period="1y")
                 if not qh.empty:
                     qqq_closes = {d.isoformat(): round(float(c), 4)
-                                  for d, c in zip(qh.index.date, qh["Close"])}
+                                  for d, c in zip(qh.index.date, qh["Close"])
+                                  if c == c}               # skip Yahoo's NaN rows
             except Exception as e:
                 print(f"  QQQ history fetch failed: {e}")
 

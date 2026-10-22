@@ -101,7 +101,7 @@ nt_contracts= cc4.number_input("SHARES" if is_stock else "CONTRACTS",
 
 sc1, sc2, sc3 = st.columns(3)
 nt_short_strike = sc1.number_input(
-    "SHORT STRIKE (sell leg)" + (" — N/A FOR STOCK" if is_stock else ""),
+    ("SHORT STRIKE (sell leg)" if is_spread else "STRIKE") + (" — N/A FOR STOCK" if is_stock else ""),
     min_value=0.0, step=0.50, key="nt_short_strike", disabled=is_stock)
 nt_long_strike  = sc2.number_input(
     "LONG STRIKE (buy leg)" + (" — SPREADS ONLY" if is_spread else " — not needed"),
@@ -115,10 +115,12 @@ nt_expiry = sc3.date_input("EXPIRY DATE" + (" — N/A FOR STOCK" if is_stock els
 
 pc1, pc1b, pc2 = st.columns(3)
 nt_premium = pc1.number_input(
-    "ENTRY PRICE PER SHARE" if is_stock else "PREMIUM / NET CREDIT (per share)",
+    "ENTRY PRICE PER SHARE" if is_stock
+    else ("PREMIUM PAID (per share)" if not strat_def["short"] else "PREMIUM / NET CREDIT (per share)"),
     min_value=0.0, step=0.01, key="nt_premium",
-    help="Stock: your purchase price per share." if is_stock else
-         "For short options: credit received per share. For spreads: net credit = sell leg − buy leg.")
+    help=("Stock: your purchase price per share." if is_stock
+          else "Long option: the debit you paid per share." if not strat_def["short"]
+          else "For short options: credit received per share. For spreads: net credit = sell leg − buy leg."))
 # Manual: log the Alpha Trend signal that triggered every trade (daily chart)
 nt_signal  = pc1b.selectbox("ALPHA TREND SIGNAL (DAILY)", [
     "MACRO GREEN + STRENGTH",
@@ -173,10 +175,12 @@ elif strat_def["type"] == "call" and strat_def["short"] and not is_spread:
     loss_note = "Capped by stock ownership (opportunity cost only)"
 
 else:
-    nt_cash_secured = nt_short_strike * 100 * nt_contracts if nt_short_strike > 0 else 0
-    nt_max_loss = nt_premium * 100 * nt_contracts if not strat_def["short"] else nt_cash_secured
-    cash_note = f"${nt_cash_secured:,.0f}"
-    loss_note = f"${nt_max_loss:,.0f}"
+    # Long single-leg option (Long Call / Long Put hedge): you PAY a debit, so
+    # cash deployed = max loss = the premium paid. The strike is NOT secured.
+    nt_cash_secured = nt_premium * 100 * nt_contracts
+    nt_max_loss     = nt_premium * 100 * nt_contracts
+    cash_note = f"Debit paid = ${nt_premium:.2f} × 100 × {nt_contracts} = ${nt_cash_secured:,.0f}"
+    loss_note = f"Max loss = premium paid (long option) = ${nt_max_loss:,.0f}"
 
 # Preview calculated values
 pc3, pc4, pc5, pc6 = st.columns(4)
@@ -246,21 +250,33 @@ if not open_trades.empty:
     )
     _sel = trades[trades["ID"] == close_id].iloc[0]
     _full = int(_sel["CONTRACTS"]) if pd.notna(_sel["CONTRACTS"]) else 1
+    _is_stock_sel = str(_sel["STRATEGY"]) == "Long Stock"
     # Reset the qty box when the selected trade changes
     if st.session_state.get("close_last_id") != close_id:
         st.session_state["close_qty"] = _full
         st.session_state["close_last_id"] = close_id
-    close_qty = cx2.number_input("QTY TO CLOSE", min_value=1, max_value=_full, step=1, key="close_qty",
-                                 help="Close PART of the position (e.g. half at 50% profit) or all of it.")
-    close_status = cx3.selectbox("OUTCOME", [
-        "EXPIRED WORTHLESS (MAX PROFIT)",
-        "CLOSED EARLY",
-        "ASSIGNED / EXERCISED",
-        "ROLLED",
-        "STOP LOSS HIT",
-    ])
-    close_price = cx4.number_input("BUYBACK / CLOSE PRICE (per share)", min_value=0.0, step=0.01,
-                                   help="For short options: premium to buy back. 0 if expired worthless.")
+    close_qty = cx2.number_input("SHARES TO SELL" if _is_stock_sel else "QTY TO CLOSE",
+                                 min_value=1, max_value=_full, step=1, key="close_qty",
+                                 help=("Sell PART of the shares or all of them. Capped at the shares "
+                                       "recorded on this lot — to sell more, fix the lot's share count "
+                                       "in MODIFY first." if _is_stock_sel else
+                                       "Close PART of the position (e.g. half at 50% profit) or all of it."))
+    # Stock lots get stock-specific outcomes; options keep the option outcomes.
+    if _is_stock_sel:
+        close_status = cx3.selectbox("OUTCOME", ["SOLD", "CALLED AWAY (CC ASSIGNED)"])
+    else:
+        close_status = cx3.selectbox("OUTCOME", [
+            "EXPIRED WORTHLESS (MAX PROFIT)",
+            "CLOSED EARLY",
+            "ASSIGNED / EXERCISED",
+            "ROLLED",
+            "STOP LOSS HIT",
+        ])
+    close_price = cx4.number_input("SELL PRICE (per share)" if _is_stock_sel else "BUYBACK / CLOSE PRICE (per share)",
+                                   min_value=0.0, step=0.01,
+                                   help=("Price per share you sold at (or the call strike if called away)."
+                                         if _is_stock_sel else
+                                         "For short options: premium to buy back. 0 if expired worthless."))
     close_date  = cx5.date_input("DATE CLOSED", datetime.date.today(), key="close_date")
 
     # Strategy facts; `qty` = how many contracts/shares are being closed
@@ -291,12 +307,20 @@ if not open_trades.empty:
     if close_id:
         row = trades[trades["ID"] == close_id].iloc[0]
         f   = _close_facts(row, close_qty)
-        denom = f["strike"] * 100 * f["qty"] if f["is_csp"] else (
-                float(row["MAX LOSS"]) if pd.notna(row["MAX LOSS"]) and row["MAX LOSS"] else 0)
+        is_stock = f["strat"] == "Long Stock"
+        if is_stock:
+            denom = f["prem"] * f["qty"]                       # cost basis of the shares sold
+        elif f["is_csp"]:
+            denom = f["strike"] * 100 * f["qty"]
+        else:
+            denom = float(row["MAX LOSS"]) if pd.notna(row["MAX LOSS"]) and row["MAX LOSS"] else 0
         return_pct = f["realized"] / denom if denom else 0
         partial = f["qty"] < f["full"]
-        tag = f" (PARTIAL — {f['qty']}/{f['full']}, {f['full']-f['qty']} stay open)" if partial else ""
-        st.info(f"REALIZED P&L on {f['qty']} ct{tag}: **${f['realized']:,.2f}**  |  Return on capital: **{return_pct:.1%}**")
+        unit = "sh" if is_stock else "ct"
+        stay = "stay held" if is_stock else "stay open"
+        ret_lbl = "Return on cost" if is_stock else "Return on capital"
+        tag = f" (PARTIAL — {f['qty']}/{f['full']}, {f['full']-f['qty']} {stay})" if partial else ""
+        st.info(f"REALIZED P&L on {f['qty']} {unit}{tag}: **${f['realized']:,.2f}**  |  {ret_lbl}: **{return_pct:.1%}**")
         if f["put_assigned"] and f["strike"] > 0:
             eff = f["strike"] - f["prem"]
             st.warning(f"ASSIGNMENT → will create LONG STOCK: **{f['qty']*100} shares of "
@@ -317,24 +341,36 @@ if not open_trades.empty:
 
         extra = []
         if partial:
-            # Shrink the open trade to the remaining contracts...
+            # Shrink the open trade to the remaining contracts/shares...
             remaining = f["full"] - f["qty"]
             trades.at[idx, "CONTRACTS"] = remaining
             if f["is_csp"]:
                 trades.at[idx, "CASH SECURED"] = f["strike"] * 100 * remaining
                 trades.at[idx, "MAX LOSS"]     = f["strike"] * 100 * remaining
+            elif f["strat"] == "Long Stock":
+                # Stock lot: cost basis scales with the shares still held
+                trades.at[idx, "CASH SECURED"] = f["prem"] * remaining
+                trades.at[idx, "MAX LOSS"]     = f["prem"] * remaining
             # ...and book the closed portion as its own closed row
+            if f["is_csp"]:
+                _cs = _ml = f["strike"] * 100 * f["qty"]
+            elif f["strat"] == "Long Stock":
+                _cs = _ml = f["prem"] * f["qty"]
+            else:
+                _cs, _ml = row.get("CASH SECURED"), row.get("MAX LOSS")
             closed = {c: row[c] for c in COLUMNS}
             closed.update({
                 "CONTRACTS": f["qty"], "STATUS": close_status,
                 "DATE CLOSED": close_date.isoformat(), "CLOSE PRICE": close_price,
                 "REALIZED PNL": round(f["realized"], 2),
-                "CASH SECURED": f["strike"]*100*f["qty"] if f["is_csp"] else row.get("CASH SECURED"),
-                "MAX LOSS":     f["strike"]*100*f["qty"] if f["is_csp"] else row.get("MAX LOSS"),
-                "NOTES": f"Partial close {f['qty']}/{f['full']} of #{close_id}",
+                "CASH SECURED": _cs, "MAX LOSS": _ml,
+                "NOTES": (f"Sold {f['qty']}/{f['full']} sh of #{close_id}" if f["strat"] == "Long Stock"
+                          else f"Partial close {f['qty']}/{f['full']} of #{close_id}"),
             })
             extra.append(closed)
-            msg = f"Closed {f['qty']}/{f['full']} ct of #{close_id}. P&L: ${f['realized']:,.2f} | {remaining} still open."
+            _u = "sh" if f["strat"] == "Long Stock" else "ct"
+            _stay = "still held" if f["strat"] == "Long Stock" else "still open"
+            msg = f"Closed {f['qty']}/{f['full']} {_u} of #{close_id}. P&L: ${f['realized']:,.2f} | {remaining} {_stay}."
         else:
             trades.at[idx, "STATUS"]      = close_status
             trades.at[idx, "DATE CLOSED"] = close_date.isoformat()

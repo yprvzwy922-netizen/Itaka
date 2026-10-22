@@ -1,10 +1,30 @@
-name: NAV + portfolio snapshot — MESSI (manual)
+name: NAV + portfolio snapshot — MESSI
 
-# Manual only. Same script as Itaka, but TABLE_PREFIX=messi_ points it at the
-# messi_* tables in the shared Supabase project. Run by hand each trading day:
-# Actions tab -> "NAV + portfolio snapshot — MESSI (manual)" -> Run workflow.
+# Same script as Itaka, but TABLE_PREFIX=messi_ points it at the messi_* tables
+# in the shared Supabase project, so MESSI's data stays separate from ITAKA's.
+# Runs automatically after the US close and can still be run by hand: Actions tab
+# -> "NAV + portfolio snapshot — MESSI" -> Run workflow.
 on:
+  # GitHub starts scheduled jobs late (often by hours) and can drop them when it's
+  # busy, so fire three times after the close, off the top of the hour. Re-running
+  # just rewrites the same day. Cron is UTC — all three land after the 4pm ET
+  # close in both EDT and EST.
+  schedule:
+    - cron: "17 21 * * 1-5"   # 5:17pm EDT / 4:17pm EST
+    - cron: "47 22 * * 1-5"   # 6:47pm EDT / 5:47pm EST
+    - cron: "13 0 * * 2-6"    # 8:13pm EDT / 7:13pm EST (next UTC day)
   workflow_dispatch: {}
+  # Self-test: a change to the snapshot code or this file runs it once right away.
+  push:
+    branches: [main]
+    paths:
+      - scripts/daily_snapshot.py
+      - .github/workflows/messi_snapshot.yml
+
+# One MESSI run at a time (ITAKA has its own group, so the funds never block each other).
+concurrency:
+  group: messi-snapshot
+  cancel-in-progress: false
 
 jobs:
   snapshot:
