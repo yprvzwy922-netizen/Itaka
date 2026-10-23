@@ -15,7 +15,8 @@ import pandas as pd
 import requests
 import yfinance as yf
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "public_app"))
+# The app modules (book.py, risk.py, watchlist.py) live at the repo root here.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import book as bk                                   # noqa: E402
 import risk                                         # noqa: E402,F401  (re-exported for the scripts)
 from watchlist import DEFAULT_WATCHLIST             # noqa: E402
