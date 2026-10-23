@@ -13,9 +13,12 @@ import yfinance as yf
 import ticket
 import db
 import bbg_style
+import risk
 from shared import (get_watchlist, add_to_watchlist, remove_from_watchlist,
                     fetch_spot, fetch_chain, bs_put_delta, bs_call_delta,
-                    ann_yield, ann_roll, moneyness, SECTORS, us_market_open_now)
+                    ann_yield, ann_roll, moneyness, SECTORS, us_market_open_now,
+                    build_book, fund_nav)
+import book as bk
 
 bbg_style.inject()
 
@@ -371,13 +374,15 @@ sel_row  = chain[chain["strike"] == sel_strike].iloc[0]
 sel_prem = float(sel_row["mid"]) if not np.isnan(sel_row["mid"]) else float(sel_row["bid"])
 
 # Live metrics for the selected strike (update on every change)
-pm1, pm2, pm3, pm4, pm5, pm6 = st.columns(6)
+sel_iv = float(sel_row["impliedVolatility"])
+pm1, pm2, pm3, pm4, pm5, pm6, pm7 = st.columns(7)
 pm1.metric("PREMIUM (MID)", f"${sel_prem:.2f}")
-pm2.metric("YIELD",         f"{sel_row['period_yield']:.2%}", help="Premium / strike over the trade's life")
-pm3.metric("ANN YIELD",     f"{sel_row['ann_yield']:.1%}",    help="Period yield x 365/DTE")
-pm4.metric("SCORE",         f"{sel_row['score']:.0f}/100")
-pm5.metric("DELTA",         f"{sel_row['delta']:.3f}")
-pm6.metric("CTS / $25K",    f"{int(sel_row['cts_25k'])}",     help="Contracts a $25k tranche covers at this strike")
+pm2.metric("IV",            f"{sel_iv:.1%}" if not np.isnan(sel_iv) else "—", help="Implied volatility of this strike (annualized)")
+pm3.metric("YIELD",         f"{sel_row['period_yield']:.2%}", help="Premium / strike over the trade's life")
+pm4.metric("ANN YIELD",     f"{sel_row['ann_yield']:.1%}",    help="Period yield x 365/DTE")
+pm5.metric("SCORE",         f"{sel_row['score']:.0f}/100")
+pm6.metric("DELTA",         f"{sel_row['delta']:.3f}")
+pm7.metric("CTS / $25K",    f"{int(sel_row['cts_25k'])}",     help="Contracts a $25k tranche covers at this strike")
 
 S = np.linspace(spot * 0.55, spot * 1.30, 300)
 intrinsic = np.maximum(sel_strike - S, 0) if opt == "put" else np.maximum(S - sel_strike, 0)
@@ -431,6 +436,47 @@ n_ticket = len(ticket.get_ticket())
 at5.markdown(" ")
 if at5.button(f"VIEW TICKET ({n_ticket})", use_container_width=True):
     st.switch_page("pages/8_Order_Ticket.py")
+
+# ── Pre-trade check: what this order does to the fund's risk limits ──────────
+# Re-runs the Portfolio's risk engine on the book with this order added, and
+# shows only what changes. Same pricing + limits as the Portfolio page.
+if at_action == "sell to open" and st.toggle("PRE-TRADE RISK CHECK", value=True, key="pretrade_on"):
+    with st.spinner("CHECKING THE ORDER AGAINST THE FUND'S LIMITS..."):
+        _tr = db.get_trades_df()
+        _new = pd.DataFrame([{
+            "ID": "NEW", "TICKER": ticker, "STRATEGY": "Short Put" if opt == "put" else "Covered Call",
+            "SHORT STRIKE": float(sel_strike), "EXPIRY": expiry, "DTE OPEN": dte, "CONTRACTS": int(at_cts),
+            "PREMIUM / CREDIT": float(at_price), "STATUS": "OPEN",
+            "CASH SECURED": float(sel_strike) * 100 * int(at_cts) if opt == "put" else 0.0}])
+        _b0 = build_book(_tr)
+        _b1 = build_book(pd.concat([_tr, _new], ignore_index=True))
+        _nav = fund_nav(_tr, _b0)["nav"]
+        _closes = db.load_closes(tuple(sorted(set(_tr["TICKER"].astype(str)) | {ticker, risk.BENCH})))
+        _betas = risk.betas_from_closes(_closes)
+    if _nav > 0:
+        r0 = risk.evaluate(_b0, _nav, _betas, available=bk.cash_summary(_b0, _nav)["available"], events=False)
+        r1 = risk.evaluate(_b1, _nav, _betas, available=bk.cash_summary(_b1, _nav)["available"], events=False)
+        imp = risk.trade_impact(r0, r1, _nav)
+        st.markdown("#### PRE-TRADE CHECK — THIS TRADE ONLY")
+        if imp["passes"]:
+            st.success("THIS TRADE PASSES YOUR RISK LIMITS.")
+        else:
+            st.error("THIS TRADE FAILS THE RISK CHECK — " + "  ·  ".join(imp["fails"]))
+        st.dataframe(pd.DataFrame(imp["rows"]).style.map(
+            lambda v: {"OK": "color:#00e676", "WATCH": "color:#ff9900", "ALREADY OVER": "color:#ff9900",
+                       "NEW BREACH": "color:#ff4444;font-weight:700",
+                       "ADDS TO BREACH": "color:#ff4444;font-weight:700"}.get(v, ""), subset=["VERDICT"]),
+            use_container_width=True, hide_index=True)
+        if imp["already_over"]:
+            st.caption("Already over before this trade, but this trade doesn't add to it materially "
+                       "(see Portfolio → RISK STATUS): " + "  ·  ".join(imp["already_over"]))
+        st.caption(f"RULE: a trade fails if it breaches a limit, or ADDS TO one that's already breached — "
+                   f"concentration (this name, sector, speculative) on any increase; QQQ −20% loss / book beta "
+                   f"if it adds more than {risk.LIMITS['tail_add_tol']:.2%} of NAV / "
+                   f"{risk.LIMITS['beta_add_tol']:.3f}×.")
+        if imp["earnings"] is not None:
+            st.warning(f"{ticker} REPORTS EARNINGS IN {imp['earnings']} DAYS — before this option expires "
+                       f"(gap risk on a short option).")
 
 st.markdown("---")
 st.caption("DECISION SUPPORT ONLY | ALWAYS RECONCILE PREMIUM, IV, AND DELTA WITH BROKER LIVE CHAIN BEFORE TRADING")

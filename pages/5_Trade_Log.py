@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import bbg_style
 import db
+from book import STRATEGIES, STRAT_NAMES, strat_mult, today_et
 
 bbg_style.inject()
 
@@ -58,30 +59,13 @@ with c_exp:
     st.markdown(" ")
     if not trades.empty:
         st.download_button("EXPORT CSV", trades.to_csv(index=False).encode(),
-                           f"trades_{datetime.date.today()}.csv", "text/csv",
+                           f"trades_{today_et()}.csv", "text/csv",
                            use_container_width=True, type="primary")
 
 st.markdown("---")
 
-# ── Strategy definitions (drives auto-calc logic) ─────────────────────────────
-STRATEGIES = {
-    "Short Put":                  {"legs":"single","type":"put",  "short":True},
-    "Cash-Secured Put (Wheel)":   {"legs":"single","type":"put",  "short":True},
-    "Bull Put Spread":            {"legs":"spread","type":"put",  "short":True},
-    "Covered Call":               {"legs":"single","type":"call", "short":True},
-    "Bear Call Spread":           {"legs":"spread","type":"call", "short":True},
-    "Long Put (Hedge)":           {"legs":"single","type":"put",  "short":False},
-    "Long Call":                  {"legs":"single","type":"call", "short":False},
-    # Stock positions: CONTRACTS = SHARES, PREMIUM / CREDIT = entry price/share,
-    # no expiry, multiplier 1 (not 100)
-    "Long Stock":                 {"legs":"stock", "type":"stock","short":False},
-}
-
-def strat_mult(strategy: str) -> int:
-    """P&L multiplier: 1 for stock (per share), 100 for option contracts."""
-    return 1 if STRATEGIES.get(str(strategy), {}).get("legs") == "stock" else 100
-
-STRAT_NAMES = list(STRATEGIES.keys())
+# Strategy definitions (drive the auto-calc logic) live in book.py — one list
+# shared with the Portfolio, the risk engine and the nightly scripts.
 
 # ── Auto-calc preview (outside form so it updates live) ───────────────────────
 st.markdown("### NEW TRADE")
@@ -90,7 +74,7 @@ st.markdown("### NEW TRADE")
 def ss(key, default): return st.session_state.setdefault(f"nt_{key}", default)
 
 cc1, cc2, cc3, cc4 = st.columns(4)
-nt_date     = cc1.date_input("DATE OPENED", datetime.date.today(), key="nt_date")
+nt_date     = cc1.date_input("DATE OPENED", today_et(), key="nt_date")
 nt_ticker   = cc2.text_input("TICKER", key="nt_ticker").upper().strip()
 nt_strategy = cc3.selectbox("STRATEGY", STRAT_NAMES, key="nt_strategy")
 strat_def   = STRATEGIES[nt_strategy]
@@ -110,7 +94,7 @@ nt_long_strike  = sc2.number_input(
     help="Only for spreads — the strike you buy as protection"
 )
 nt_expiry = sc3.date_input("EXPIRY DATE" + (" — N/A FOR STOCK" if is_stock else ""),
-                           datetime.date.today() + datetime.timedelta(days=35),
+                           today_et() + datetime.timedelta(days=35),
                            key="nt_expiry", disabled=is_stock)
 
 pc1, pc1b, pc2 = st.columns(3)
@@ -143,7 +127,7 @@ nt_consensus = ac2.checkbox("CONSENSUS TRADE", key="nt_consensus",
                             help="Flag if this was an agreed / high-conviction call.")
 
 # Auto-calculations
-nt_dte = None if is_stock else max((nt_expiry - datetime.date.today()).days, 0)
+nt_dte = None if is_stock else max((nt_expiry - today_et()).days, 0)
 
 if is_stock:
     # Long stock: cost basis = price x shares; worst case stock -> $0
@@ -277,7 +261,7 @@ if not open_trades.empty:
                                    help=("Price per share you sold at (or the call strike if called away)."
                                          if _is_stock_sel else
                                          "For short options: premium to buy back. 0 if expired worthless."))
-    close_date  = cx5.date_input("DATE CLOSED", datetime.date.today(), key="close_date")
+    close_date  = cx5.date_input("DATE CLOSED", today_et(), key="close_date")
 
     # Strategy facts; `qty` = how many contracts/shares are being closed
     def _close_facts(row, qty):
@@ -427,7 +411,7 @@ else:
     try:
         _cur_exp = datetime.date.fromisoformat(str(row["EXPIRY"]))
     except Exception:
-        _cur_exp = datetime.date.today() + datetime.timedelta(days=35)
+        _cur_exp = today_et() + datetime.timedelta(days=35)
     if st.session_state.get("mod_last_id") != mod_id:
         st.session_state["mod_strike"] = float(row["SHORT STRIKE"]) if pd.notna(row["SHORT STRIKE"]) else 0.0
         st.session_state["mod_ctrs"]   = int(row["CONTRACTS"]) if pd.notna(row["CONTRACTS"]) else 1
@@ -464,7 +448,7 @@ else:
             try:
                 d_open = datetime.date.fromisoformat(str(row["DATE OPENED"]))
             except Exception:
-                d_open = datetime.date.today()
+                d_open = today_et()
             trades.at[idx, "DTE OPEN"]     = max((m_exp - d_open).days, 0)
             # Recompute cash/max-loss for single-leg short puts
             if str(row["STRATEGY"]) in ("Short Put", "Cash-Secured Put (Wheel)") and m_strike > 0:

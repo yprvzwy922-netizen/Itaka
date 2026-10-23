@@ -6,6 +6,35 @@ Home content lives in pages/0_Home.py.
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
+# ── Stale-module guard ────────────────────────────────────────────────────────
+# Streamlit Cloud pulls new code on a git push and re-reads this file and the
+# pages, but can keep the OLD copies of our own modules (shared, db, book, ...)
+# in memory — a page then fails importing a name only the new copy has. Each
+# run, drop any of our modules whose file changed since it was checked, or whose
+# loaded copy lacks a function/class its file defines, so the next import loads
+# it fresh. One stat() per module per run; a file is parsed only when it changes.
+import ast
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_checked = sys.__dict__.setdefault("_app_module_mtimes", {})
+for _name, _mod in list(sys.modules.items()):
+    _file = getattr(_mod, "__file__", None) or ""
+    if not _file.endswith(".py") or os.path.dirname(os.path.abspath(_file)) != _APP_DIR:
+        continue
+    try:
+        _mtime = os.path.getmtime(_file)
+        if _checked.get(_name) == _mtime:
+            continue                                   # unchanged since last check
+        with open(_file) as _fh:
+            _defined = {n.name for n in ast.parse(_fh.read()).body
+                        if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+    except (OSError, SyntaxError):
+        continue
+    if _name in _checked or not _defined <= set(vars(_mod)):
+        sys.modules.pop(_name, None)                   # stale -> imported fresh
+        _checked.pop(_name, None)
+    else:
+        _checked[_name] = _mtime
+
 import streamlit as st
 import bbg_style
 

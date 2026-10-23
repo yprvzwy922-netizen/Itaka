@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
       - id: chrome
         uses: browser-actions/setup-chrome@v1
-      - run: pip install numpy pandas requests yfinance
+      - run: pip install numpy pandas scipy requests yfinance
 
       - name: Capture today's snapshot
         run: python scripts/daily_snapshot.py

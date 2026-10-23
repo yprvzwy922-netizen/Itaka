@@ -14,6 +14,7 @@ import streamlit as st
 import bbg_style
 import db
 import ticket
+from book import today_et
 from shared import (fetch_spot, fetch_expirations, fetch_chain_exact,
                     bs_put_delta, bs_call_delta, is_third_friday)
 
@@ -69,7 +70,7 @@ if float(cur_row["dist"]) > max(0.015 * cur_strike, 0.50):
 buy_bid  = float(cur_row["bid"]);  buy_ask = float(cur_row["ask"])
 buy_mid  = float(cur_row["mid"]) if not np.isnan(cur_row["mid"]) else float("nan")
 try:
-    cur_dte = max((datetime.date.fromisoformat(cur_expiry) - datetime.date.today()).days, 0)
+    cur_dte = max((datetime.date.fromisoformat(cur_expiry) - today_et()).days, 0)
 except Exception:
     cur_dte = 0
 iv_cur = float(cur_row["impliedVolatility"]) if cur_row["impliedVolatility"] > 0 else 0.35
@@ -139,7 +140,7 @@ for j, e in enumerate(exps):
     else:
         ch = ch[(ch["strike"] >= cur_strike * 0.999) & (ch["strike"] <= cur_strike * 1.40)]
     try:
-        new_dte    = max((datetime.date.fromisoformat(e) - datetime.date.today()).days, 1)
+        new_dte    = max((datetime.date.fromisoformat(e) - today_et()).days, 1)
         added_days = max((datetime.date.fromisoformat(e) -
                           datetime.date.fromisoformat(cur_expiry)).days, 1)
     except Exception:

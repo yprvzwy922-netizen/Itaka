@@ -16,6 +16,7 @@ import pandas as pd
 import streamlit as st
 import bbg_style
 import ticket
+from book import today_et
 
 bbg_style.inject()
 
@@ -38,7 +39,7 @@ with st.expander("➕ ADD A LEG", expanded=not ticket.get_ticket()):
             ["sell to open", "buy to close", "buy to open", "sell to close"])
         g_ticker = a2.text_input("TICKER")
         g_type   = a3.selectbox("TYPE", ["put", "call"])
-        g_expiry = a4.date_input("EXPIRY", datetime.date.today())
+        g_expiry = a4.date_input("EXPIRY", today_et())
         b1, b2, b3, b4 = st.columns(4)
         g_strike = b1.number_input("STRIKE", min_value=0.0, step=1.0, format="%.2f")
         g_price  = b2.number_input("PRICE (per contract)", min_value=0.0, step=0.05, format="%.2f")

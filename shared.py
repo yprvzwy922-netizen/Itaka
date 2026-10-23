@@ -13,107 +13,12 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
-from scipy.stats import norm
+import book as bk
+# Black-Scholes + the US trading date live in book.py (shared with the scripts);
+# re-exported here so `from shared import bs_price` etc. keeps working.
+from book import _bs_delta, bs_put_delta, bs_call_delta, bs_price, today_et  # noqa: F401
 
-# ── Default watchlist ─────────────────────────────────────────────────────────
-DEFAULT_WATCHLIST = [
-    {"ticker": "IREN",  "company": "IREN Ltd",               "sector": "Data Centers & AI",    "bucket": "Growth",      "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "CIFR",  "company": "Cipher Digital",          "sector": "Data Centers & AI",    "bucket": "Speculative", "conviction": 3, "delta_band": "Income"},
-    {"ticker": "NBIS",  "company": "Nebius Group",            "sector": "Data Centers & AI",    "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "CRWV",  "company": "CoreWeave",               "sector": "Data Centers & AI",    "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "CEG",   "company": "Constellation Energy",    "sector": "Energy & Power",       "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "DGXX",  "company": "Digi Power X",            "sector": "Energy & Power",       "bucket": "Speculative", "conviction": 3, "delta_band": "Income"},
-    {"ticker": "VRT",   "company": "Vertiv",                  "sector": "Energy & Power",       "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "GEV",   "company": "GE Vernova",              "sector": "Energy & Power",       "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "NVDA",  "company": "NVIDIA",                  "sector": "Semiconductors",       "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "MU",    "company": "Micron",                  "sector": "Semiconductors",       "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "AMD",   "company": "Advanced Micro Devices",  "sector": "Semiconductors",       "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "GOOG",  "company": "Alphabet",                "sector": "Technology",           "bucket": "Core",        "conviction": 3, "delta_band": "Income"},
-    {"ticker": "BB",    "company": "BlackBerry",              "sector": "Technology",           "bucket": "Growth",      "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "UBER",  "company": "Uber Technologies",       "sector": "Technology",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "LLY",   "company": "Eli Lilly",               "sector": "Healthcare",           "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "NVO",   "company": "Novo Nordisk",            "sector": "Healthcare",           "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "AMGN",  "company": "Amgen",                   "sector": "Healthcare",           "bucket": "Core",        "conviction": 3, "delta_band": "Income"},
-    {"ticker": "HIMS",  "company": "Hims & Hers",             "sector": "Healthcare",           "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "VKTX",  "company": "Viking Therapeutics",     "sector": "Healthcare",           "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "IBRX",  "company": "ImmunityBio",             "sector": "Healthcare",           "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    # ── Added 2026-06-18 from broker "Cash secured Puts" list ──────────────────
-    # AI compute / semis
-    {"ticker": "AVGO",  "company": "Broadcom",                "sector": "Semiconductors",       "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "MRVL",  "company": "Marvell Technology",      "sector": "Semiconductors",       "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "AXTI",  "company": "AXT Inc",                 "sector": "Semiconductors",       "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    # Data centers / AI
-    {"ticker": "PENG",  "company": "Penguin Solutions",       "sector": "Data Centers & AI",    "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "NUAI",  "company": "New Era Energy & Digital", "sector": "Data Centers & AI",    "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "OSS",   "company": "One Stop Systems",        "sector": "Data Centers & AI",    "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    # Power / energy
-    {"ticker": "VST",   "company": "Vistra",                  "sector": "Energy & Power",       "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "UUUU",  "company": "Energy Fuels (uranium)",  "sector": "Energy & Power",       "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "FLNC",  "company": "Fluence Energy",          "sector": "Energy & Power",       "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "TE",    "company": "T1 Energy (VERIFY)",      "sector": "Energy & Power",       "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    # Big tech / software
-    {"ticker": "AAPL",  "company": "Apple",                   "sector": "Technology",           "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "NOW",   "company": "ServiceNow (VERIFY PX)",  "sector": "Technology",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "RDDT",  "company": "Reddit",                  "sector": "Technology",           "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "ZETA",  "company": "Zeta Global",             "sector": "Technology",           "bucket": "Growth",      "conviction": 2, "delta_band": "Income"},
-    {"ticker": "ADEA",  "company": "Adeia",                   "sector": "Technology",           "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "MGNI",  "company": "Magnite",                 "sector": "Technology",           "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "OPEN",  "company": "Opendoor Technologies",   "sector": "Technology",           "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    {"ticker": "ONDS",  "company": "Ondas Holdings",          "sector": "Technology",           "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    {"ticker": "OUST",  "company": "Ouster (lidar)",          "sector": "Technology",           "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    {"ticker": "KEEL",  "company": "KEEL (VERIFY)",           "sector": "Technology",           "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    # Quantum (binary, very high IV)
-    {"ticker": "QBTS",  "company": "D-Wave Quantum",          "sector": "Quantum",              "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "RGTI",  "company": "Rigetti Computing",       "sector": "Quantum",              "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "QUBT",  "company": "Quantum Computing Inc",   "sector": "Quantum",              "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    # Space & defense
-    {"ticker": "KTOS",  "company": "Kratos Defense",          "sector": "Space & Defense",      "bucket": "Growth",      "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "RKLB",  "company": "Rocket Lab",              "sector": "Space & Defense",      "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "ASTS",  "company": "AST SpaceMobile",         "sector": "Space & Defense",      "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "SPCX",  "company": "SpaceX",                  "sector": "Space & Defense",      "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    # Financials
-    {"ticker": "ICE",   "company": "Intercontinental Exch.",  "sector": "Financials",           "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "PLMR",  "company": "Palomar Holdings",        "sector": "Financials",           "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "INTR",  "company": "Inter & Co",              "sector": "Financials",           "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "PGY",   "company": "Pagaya Technologies",     "sector": "Financials",           "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "QXO",   "company": "QXO Inc",                 "sector": "Industrials",          "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    # Healthcare
-    {"ticker": "HALO",  "company": "Halozyme Therapeutics",   "sector": "Healthcare",           "bucket": "Growth",      "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "OSCR",  "company": "Oscar Health",            "sector": "Healthcare",           "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "ARDX",  "company": "Ardelyx",                 "sector": "Healthcare",           "bucket": "Speculative", "conviction": 1, "delta_band": "Income"},
-    # Crypto & digital assets (ETFs/proxies — selling puts = bullish crypto)
-    {"ticker": "IBIT",  "company": "iShares Bitcoin Trust",   "sector": "Crypto & Digital",     "bucket": "Speculative", "conviction": 3, "delta_band": "Income"},
-    {"ticker": "ETHA",  "company": "iShares Ethereum Trust",  "sector": "Crypto & Digital",     "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    {"ticker": "GLXY",  "company": "Galaxy Digital",          "sector": "Crypto & Digital",     "bucket": "Speculative", "conviction": 2, "delta_band": "Income"},
-    # ── Added 2026-06-25: CORE anchors to broaden tradable setups (on-theme,
-    #    mega-cap, deep options) — addresses being under the Core target ──────────
-    {"ticker": "MSFT",  "company": "Microsoft",               "sector": "Technology",           "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "META",  "company": "Meta Platforms",          "sector": "Technology",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "AMZN",  "company": "Amazon",                  "sector": "Technology",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "TSM",   "company": "Taiwan Semiconductor",    "sector": "Semiconductors",       "bucket": "Core",        "conviction": 5, "delta_band": "Wheel"},
-    {"ticker": "ANET",  "company": "Arista Networks",         "sector": "Data Centers & AI",    "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "ORCL",  "company": "Oracle",                  "sector": "Data Centers & AI",    "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "ETN",   "company": "Eaton",                   "sector": "Energy & Power",       "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "ABBV",  "company": "AbbVie",                  "sector": "Healthcare",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    # ── Growth complements: liquid, on-theme, frequent setups ──────────────────
-    {"ticker": "PLTR",  "company": "Palantir",                "sector": "Technology",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "DELL",  "company": "Dell Technologies",       "sector": "Data Centers & AI",    "bucket": "Growth",      "conviction": 3, "delta_band": "Wheel"},
-    {"ticker": "SMCI",  "company": "Super Micro Computer",    "sector": "Data Centers & AI",    "bucket": "Growth",      "conviction": 2, "delta_band": "Income"},
-    # ── Added 2026-06-25: premium machines + diversifiers (lower AI correlation) ─
-    {"ticker": "TSLA",  "company": "Tesla",                   "sector": "Consumer",             "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "CRWD",  "company": "CrowdStrike",             "sector": "Technology",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "APP",   "company": "AppLovin",                "sector": "Technology",           "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "COIN",  "company": "Coinbase",                "sector": "Crypto & Digital",     "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "MA",    "company": "Mastercard",             "sector": "Financials",           "bucket": "Core",        "conviction": 4, "delta_band": "Income"},
-    {"ticker": "JPM",   "company": "JPMorgan Chase",          "sector": "Financials",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "CAT",   "company": "Caterpillar",             "sector": "Industrials",          "bucket": "Core",        "conviction": 3, "delta_band": "Wheel"},
-    {"ticker": "UNH",   "company": "UnitedHealth",            "sector": "Healthcare",           "bucket": "Core",        "conviction": 4, "delta_band": "Wheel"},
-    {"ticker": "HOOD",  "company": "Robinhood",               "sector": "Financials",           "bucket": "Growth",      "conviction": 3, "delta_band": "Income"},
-    {"ticker": "SOFI",  "company": "SoFi Technologies",       "sector": "Financials",           "bucket": "Growth",      "conviction": 2, "delta_band": "Income"},
-    {"ticker": "XOM",   "company": "ExxonMobil",              "sector": "Energy & Power",       "bucket": "Core",        "conviction": 4, "delta_band": "Income"},
-]
-
-SECTORS = sorted(set(w["sector"] for w in DEFAULT_WATCHLIST))
+from watchlist import DEFAULT_WATCHLIST, SECTORS  # noqa: E402,F401  (one shared copy)
 TICKERS = [w["ticker"] for w in DEFAULT_WATCHLIST]
 
 import db
@@ -159,41 +64,6 @@ def remove_from_watchlist(ticker):
         st.session_state["watchlist"].pop(ticker.upper(), None)
 
 # ── Math ──────────────────────────────────────────────────────────────────────
-def _bs_delta(spot, strike, iv, dte, rf, kind):
-    """Vectorized Black-Scholes delta. `strike`/`iv` may be scalars or arrays.
-    Returns a float for scalar input, a numpy array otherwise."""
-    strike = np.asarray(strike, dtype=float)
-    iv     = np.asarray(iv, dtype=float)
-    scalar = strike.ndim == 0 and iv.ndim == 0
-    T = dte / 365.0
-    with np.errstate(divide="ignore", invalid="ignore"):
-        d1  = (np.log(spot/strike) + (rf + 0.5*iv**2)*T) / (iv*np.sqrt(T))
-        out = np.abs(norm.cdf(d1) - 1) if kind == "put" else norm.cdf(d1)
-    invalid = (dte <= 0) | (iv <= 0) | (spot <= 0) | (strike <= 0)
-    out = np.where(invalid, np.nan, out)
-    return float(out) if scalar else out
-
-def bs_put_delta(spot, strike, iv, dte, rf=0.053):
-    return _bs_delta(spot, strike, iv, dte, rf, "put")
-
-def bs_call_delta(spot, strike, iv, dte, rf=0.053):
-    return _bs_delta(spot, strike, iv, dte, rf, "call")
-
-def bs_price(spot, strike, iv, dte, rf=0.053, kind="put"):
-    """Black-Scholes European option price (scalar).
-    Falls back to intrinsic value when expired or IV is unusable."""
-    if spot <= 0 or strike <= 0:
-        return float("nan")
-    if dte <= 0 or iv <= 0:
-        return max(strike - spot, 0) if kind == "put" else max(spot - strike, 0)
-    T  = dte / 365.0
-    sq = iv * np.sqrt(T)
-    d1 = (np.log(spot / strike) + (rf + 0.5 * iv * iv) * T) / sq
-    d2 = d1 - sq
-    if kind == "put":
-        return float(strike * np.exp(-rf * T) * norm.cdf(-d2) - spot * norm.cdf(-d1))
-    return float(spot * norm.cdf(d1) - strike * np.exp(-rf * T) * norm.cdf(d2))
-
 def moneyness(spot, strike, is_put=True):
     b = 0.01 * spot
     if is_put:
@@ -286,7 +156,7 @@ def _as_date(d):
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_earnings(tkr):
     """Days until the next earnings date (>=0), or None if unavailable."""
-    today = datetime.date.today()
+    today = today_et()
     candidates = []
     try:
         t = yf.Ticker(tkr)
@@ -359,7 +229,7 @@ def is_third_friday(d: datetime.date) -> bool:
 @st.cache_data(ttl=300, show_spinner=False)
 def _chain_cached(tkr, target_dte, option_type, monthly_only, prefer_quotes=False):
     exps = _expirations_cached(tkr)             # Massive when configured, else Yahoo
-    today = datetime.date.today()
+    today = today_et()
 
     # For longer tenors, restrict to standard monthly contracts (3rd Friday),
     # which carry the deepest liquidity. Fall back to all if none qualify.
@@ -710,52 +580,50 @@ def fetch_option_live(tkr: str, strike: float, expiry: str, option_type: str = "
         return float("nan"), float("nan")
 
 
+def sector_map():
+    """ticker -> watchlist entry (sector / bucket): the live DB list over the
+    code's defaults, so names not yet synced to the DB still resolve."""
+    m = {w["ticker"]: w for w in DEFAULT_WATCHLIST}
+    m.update({w["ticker"]: w for w in get_watchlist()})
+    return m
+
+
+def build_book(trades):
+    """The open book priced with the live, cached feeds (book.build_book) —
+    the same pricing the Portfolio page, the Performance headline and the
+    pre-trade check all use. Warms every spot + chain concurrently first."""
+    if trades is None or trades.empty:
+        return pd.DataFrame()
+    open_t = trades[trades["STATUS"] == "OPEN"]
+    keys = [(str(t["TICKER"]), str(t["EXPIRY"]), bk.option_kind(t["STRATEGY"]))
+            for _, t in open_t.iterrows()
+            if not bk.is_stock(t["STRATEGY"]) and pd.notna(t["SHORT STRIKE"])
+            and str(t["EXPIRY"]) not in ("nan", "None", "")]
+    prefetch_marks(open_t["TICKER"].astype(str).tolist(), keys)
+    return bk.build_book(open_t, fetch_spot, fetch_option_live, fetch_earnings, sector_map())
+
+
+def fund_nav(trades, book):
+    """NAV = net cash flows (deposits − withdrawals) + realized + unrealized,
+    and NAV per unit (units from the cash flows' units_delta)."""
+    flows = db.load_cash_flows()
+    num = lambda c: pd.to_numeric(flows[c], errors="coerce").sum() if not flows.empty else 0.0
+    contributed, units = float(num("amount")), float(num("units_delta"))
+    realized = float(pd.to_numeric(trades["REALIZED PNL"], errors="coerce").fillna(0).sum()) if not trades.empty else 0.0
+    unreal = float(pd.to_numeric(book["UNREAL PNL"], errors="coerce").sum()) if not book.empty else 0.0
+    nav = contributed + realized + unreal
+    return {"contributed": contributed, "units": units, "realized": realized, "unreal": unreal,
+            "nav": nav, "npu": nav / units if units > 0 else None}
+
+
 def compute_book_pnl(trades):
-    """(realized, unrealized) P&L across the whole book — powers NAV.
-    Realized = Σ closed REALIZED PNL. Unrealized marks open positions at live
-    mid (options) / spot (stock). Stock multiplier 1, options 100."""
-    import pandas as _pd
+    """(realized, unrealized) P&L across the whole book — powers the NAV on the
+    Performance page. Same pricing as the Portfolio page (one shared book)."""
     if trades is None or trades.empty:
         return 0.0, 0.0
-    realized = _pd.to_numeric(trades.get("REALIZED PNL"), errors="coerce").fillna(0).sum()
-
-    unreal = 0.0
-    open_t = trades[trades["STATUS"] == "OPEN"]
-    for _, t in open_t.iterrows():
-        strat = str(t["STRATEGY"])
-        ctrs  = int(t["CONTRACTS"]) if _pd.notna(t["CONTRACTS"]) else 0
-        prem  = float(t["PREMIUM / CREDIT"]) if _pd.notna(t["PREMIUM / CREDIT"]) else 0.0
-        tkr   = str(t["TICKER"])
-        # Manual mark (typed from the broker) beats the live feed
-        mmark = None
-        if "MANUAL MARK" in t and _pd.notna(t.get("MANUAL MARK")) and t.get("MANUAL MARK"):
-            mmark = float(t["MANUAL MARK"])
-            if mmark <= 0:
-                mmark = None
-        if strat == "Long Stock":
-            try:
-                spot = mmark if mmark else fetch_spot(tkr)
-                if not np.isnan(spot) and prem > 0:
-                    unreal += (spot - prem) * ctrs
-            except Exception:
-                pass
-            continue
-        strike = float(t["SHORT STRIKE"]) if _pd.notna(t["SHORT STRIKE"]) else 0.0
-        expiry = str(t["EXPIRY"])
-        if strike <= 0 or expiry in ("nan", "None", ""):
-            continue
-        is_short = strat not in ("Long Put (Hedge)", "Long Call")
-        opt = "put" if "Put" in strat else "call"
-        if mmark:
-            mid = mmark
-        else:
-            try:
-                mid, _ = fetch_option_live(tkr, strike, expiry, opt)
-            except Exception:
-                mid = float("nan")
-        if np.isnan(mid):
-            continue
-        unreal += (prem - mid) * 100 * ctrs if is_short else (mid - prem) * 100 * ctrs
+    realized = pd.to_numeric(trades.get("REALIZED PNL"), errors="coerce").fillna(0).sum()
+    b = build_book(trades)
+    unreal = pd.to_numeric(b["UNREAL PNL"], errors="coerce").sum() if not b.empty else 0.0
     return float(realized), float(unreal)
 
 

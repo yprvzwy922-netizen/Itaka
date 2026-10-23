@@ -18,7 +18,10 @@ on:
   push:
     branches: [main]
     paths:
-      - scripts/daily_snapshot.py
+      - scripts/**
+      - book.py
+      - risk.py
+      - watchlist.py
       - .github/workflows/messi_snapshot.yml
 
 # One MESSI run at a time (ITAKA has its own group, so the funds never block each other).
@@ -34,7 +37,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install yfinance pandas numpy requests
+      - run: pip install yfinance pandas numpy scipy requests
       - name: NAV + portfolio snapshot (Messi)
         run: python scripts/daily_snapshot.py
         env:

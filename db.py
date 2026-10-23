@@ -12,26 +12,9 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# App-side trade columns (single source of truth for the Trade Log / Portfolio)
-TRADE_COLUMNS = [
-    "ID","DATE OPENED","TICKER","STRATEGY",
-    "SHORT STRIKE","LONG STRIKE","EXPIRY","DTE OPEN",
-    "CONTRACTS","PREMIUM / CREDIT","CASH SECURED","MAX LOSS",
-    "STATUS","DATE CLOSED","CLOSE PRICE","REALIZED PNL","SIGNAL",
-    "RECOMMENDED BY","CONSENSUS","MANUAL MARK","NET CREDIT BASIS","NOTES"
-]
-
-_COL2DB = {
-    "ID":"id", "DATE OPENED":"date_opened", "TICKER":"ticker", "STRATEGY":"strategy",
-    "SHORT STRIKE":"short_strike", "LONG STRIKE":"long_strike", "EXPIRY":"expiry",
-    "DTE OPEN":"dte_open", "CONTRACTS":"contracts", "PREMIUM / CREDIT":"premium",
-    "CASH SECURED":"cash_secured", "MAX LOSS":"max_loss", "STATUS":"status",
-    "DATE CLOSED":"date_closed", "CLOSE PRICE":"close_price",
-    "REALIZED PNL":"realized_pnl", "SIGNAL":"signal",
-    "RECOMMENDED BY":"recommended_by", "CONSENSUS":"consensus",
-    "MANUAL MARK":"manual_mark", "NET CREDIT BASIS":"net_credit_basis", "NOTES":"notes",
-}
-_DB2COL = {v: k for k, v in _COL2DB.items()}
+import risk
+# Trade columns + DB mapping live in book.py (shared with the GitHub scripts)
+from book import TRADE_COLUMNS, COL2DB as _COL2DB, trades_from_rows
 
 # ── Connection ────────────────────────────────────────────────────────────────
 def _creds():
@@ -94,15 +77,7 @@ def _clean(records):
 
 # ── Trades ────────────────────────────────────────────────────────────────────
 def load_trades() -> pd.DataFrame:
-    rows = _rest("GET", "trades", params={"select": "*", "order": "id"}) or []
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return pd.DataFrame(columns=TRADE_COLUMNS)
-    df = df.rename(columns=_DB2COL)
-    for c in TRADE_COLUMNS:
-        if c not in df.columns:
-            df[c] = None
-    return df[TRADE_COLUMNS]
+    return trades_from_rows(_rest("GET", "trades", params={"select": "*", "order": "id"}))
 
 # Columns the app can live without if the DB migration hasn't been run yet —
 # never let a missing optional column block trade entry.
@@ -289,5 +264,17 @@ def load_fund_snapshots() -> pd.DataFrame:
         rows = _rest("GET", "fund_snapshots",
                      params={"select": "*", "order": "snap_date"}) or []
         return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_closes(tickers: tuple) -> pd.DataFrame:
+    """Daily closes for many tickers from this fund's snapshots table, wide
+    (index=date, columns=ticker) — feeds betas and the breach history. Goes
+    through _rest, so a prefixed deployment (e.g. messi_) reads its own table."""
+    if not configured():
+        return pd.DataFrame()
+    try:
+        return risk.fetch_closes(lambda p: _rest("GET", "snapshots", params=p), tickers)
     except Exception:
         return pd.DataFrame()

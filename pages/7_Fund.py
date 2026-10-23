@@ -23,6 +23,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import bbg_style
+from book import today_et
 import db
 from shared import compute_book_pnl, fetch_hist
 
@@ -83,7 +84,7 @@ st.caption("Positive AMOUNT = deposit (issues units). Negative AMOUNT = withdraw
 cc1, cc2 = st.columns(2)
 c_amt  = cc1.number_input("AMOUNT ($) — negative to withdraw", value=0.0, step=1000.0,
                           format="%.2f", key="c_amt")
-c_date = cc2.date_input("DATE", datetime.date.today(), key="c_date")
+c_date = cc2.date_input("DATE", today_et(), key="c_date")
 
 # Units MUST be priced at the NAV/unit of the FLOW DATE, not today's — otherwise a
 # backdated flow issues/redeems units at the wrong price. Use that date's snapshot
@@ -377,7 +378,7 @@ if st.session_state.get("_report_html"):
     import base64
     import streamlit.components.v1 as _components
     _html = st.session_state["_report_html"]
-    _fname = f"{_rep_fund_name().split()[0].lower()}_report_{datetime.date.today().isoformat()}"
+    _fname = f"{_rep_fund_name().split()[0].lower()}_report_{today_et().isoformat()}"
 
     # Primary PDF path: the browser's own print engine — vector, identical to the
     # file, and works on any deployment with no server-side libraries. Opens the
