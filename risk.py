@@ -27,13 +27,13 @@ LIMITS = {
     "tail_qqq20":    0.15,   # max loss if QQQ -20%, as a fraction of NAV
     "book_beta":     1.00,   # max beta-weighted $ delta / NAV (1.0 = like owning QQQ)
     "max_name":      0.10,   # max cash at risk in one name / NAV        (manual)
-    "max_trade":     0.03,   # max cash at risk in one position / NAV    (manual)
+    "max_trade":     0.05,   # max cash at risk in one position / NAV    (manual 3%, raised 2026-10)
     "max_sector":    0.30,   # max cash at risk in one sector / NAV      (manual)
     "max_spec":      0.40,   # max Speculative bucket / NAV              (manual)
     "min_core":      0.40,   # min Core bucket / NAV                     (manual)
     "max_stock_inv": 0.40,   # max held stock / NAV                      (manual §8.3)
     "dd_warn":       0.05,   # NAV/unit drawdown from peak: slow down
-    "dd_stop":       0.10,   # NAV/unit drawdown from peak: stop adding risk
+    "dd_stop":       0.15,   # NAV/unit drawdown from peak: stop adding risk (raised 2026-10)
     # Pre-trade: while the QQQ tail / book beta are over their limits, a new trade
     # may add at most this much to them (every short put adds some; these let a
     # genuinely diversifying, low-beta trade through). Concentration has no tolerance.
